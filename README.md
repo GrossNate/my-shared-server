@@ -56,7 +56,7 @@ Clone the server repository . . .
 ```shell
 sudo install -d -o "$USER" -g "$(id -gn)" /srv/server
 
-git clone grossnate@github-server:GrossNate/my-shared-server.git \
+git clone git@github-server:GrossNate/my-shared-server.git \
   /srv/server
 
 cd /srv/server
