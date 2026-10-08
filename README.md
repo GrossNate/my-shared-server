@@ -61,3 +61,9 @@ git clone git@github-server:GrossNate/my-shared-server.git \
 
 cd /srv/server
 ```
+
+Make `bootstrap.sh` executable and run it . . .
+```shell
+chmod +x bootstrap.sh
+./bootstrap.sh
+```

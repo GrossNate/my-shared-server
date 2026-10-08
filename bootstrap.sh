@@ -9,7 +9,7 @@ if [[ "$EUID" -eq 0 ]]; then
 fi
 
 command -v sudo >/dev/null || die "sudo is required."
-sudo -v
+# sudo -v # removing this because my setup is passwordless
 
 [[ -r /etc/os-release ]] || die "Cannot identify OS."
 # shellcheck disable=SC1091
