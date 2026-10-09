@@ -91,4 +91,15 @@ sudo ufw status verbose
 If any of the above are not correct, fix them before proceeding (but don't
 enable ufw before esuring you've got ssh access).
 
+## Set up dotfile management (optional)
 
+In case you're particular about this sort of thing. Here's a reminder for me:
+```shell
+sudo snap install chezmoi --classic
+
+chezmoi init https://github.com/GrossNate/dotfiles.git
+
+chezmoi apply
+```
+
+Then in the future if you change your config you can simply `chezmoi update`.
