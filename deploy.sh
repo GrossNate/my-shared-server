@@ -37,15 +37,16 @@ else
   git -C "$REQUESTHOLE_DIR" pull --ff-only
 fi
 
-# Validate edge configuration.
-log "Validating Caddy configuration"
-docker compose run --rm --no-deps caddy \
-  caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
-
 # Start the server edge first.
 # This also creates the shared external network for applications.
 log "Starting Caddy"
 docker compose up -d
+
+# Validate the configuration inside the existing Caddy container.
+# Do not use 'docker compose run' because Caddy has a fixed IP address.
+log "Validating Caddy configuration"
+docker compose exec -T caddy \
+  caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
 # Apply the RequestHole production configuration.
 log "Validating RequestHole Compose configuration"

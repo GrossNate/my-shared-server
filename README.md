@@ -64,7 +64,7 @@ cd /srv/server
 
 ### 3. Make `bootstrap.sh` executable and run it . . .
 ```shell
-chmod +x bootstrap.sh
+chmod +x bootstrap.sh deploy.sh
 ./bootstrap.sh
 ```
 
