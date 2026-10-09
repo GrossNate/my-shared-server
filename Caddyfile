@@ -1,0 +1,22 @@
+{
+    email admin@gross.dev
+
+    # Use Let's Encrypt exclusively.
+    acme_ca https://acme-v02.api.letsencrypt.org/directory
+}
+
+requesthole.com {
+    reverse_proxy requesthole-nginx:80 {
+        # Never trust an incoming client-supplied forwarding chain.
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+
+        # Support Server-Sent Events and streaming responses.
+        flush_interval -1
+    }
+}
+
+www.requesthole.com {
+    redir https://requesthole.com{uri} permanent
+}

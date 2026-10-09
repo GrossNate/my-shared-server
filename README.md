@@ -52,7 +52,7 @@ Test the connection . . .
 ssh -T github-server
 ```
 
-Clone the server repository . . .
+### 2. Clone the server repository . . .
 ```shell
 sudo install -d -o "$USER" -g "$(id -gn)" /srv/server
 
@@ -62,8 +62,33 @@ git clone git@github-server:GrossNate/my-shared-server.git \
 cd /srv/server
 ```
 
-Make `bootstrap.sh` executable and run it . . .
+### 3. Make `bootstrap.sh` executable and run it . . .
 ```shell
 chmod +x bootstrap.sh
 ./bootstrap.sh
 ```
+
+Exit the VPS and then reconnect.
+
+Test that Docker and Docker Compose are working . . .
+```shell
+docker ps
+docker compose version
+```
+
+### 4. Open ports 80 and 443 . . .
+```shell
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+```
+
+Check that now 22, 80, and 443 are all open ("ALLOW IN" for HTTP/S and "LIMIT
+IN" for SSH) and status is "active" . . .
+```shell
+sudo ufw status verbose
+```
+
+If any of the above are not correct, fix them before proceeding (but don't
+enable ufw before esuring you've got ssh access).
+
+

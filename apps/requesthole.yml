@@ -1,0 +1,20 @@
+services:
+  nginx:
+    # The standalone application publishes port 8080.
+    # Remove that binding when running behind Caddy.
+    ports: !reset []
+
+    # Add the shared edge network alongside backend_private.
+    networks:
+      edge:
+        aliases:
+          - requesthole-nginx
+
+    # Trust the edge proxy when interpreting client IP addresses.
+    volumes:
+      - /srv/server/nginx/requesthole-realip.conf:/etc/nginx/conf.d/00-edge-realip.conf:ro
+
+networks:
+  edge:
+    external: true
+    name: edge
