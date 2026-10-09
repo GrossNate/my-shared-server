@@ -1,7 +1,7 @@
 name: shared-server
 
 include:
-  - ./apps/requesthole.yml
+  - ./apps/requesthole/compose.yml
 
 services:
   caddy:

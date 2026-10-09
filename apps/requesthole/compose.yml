@@ -36,7 +36,7 @@ services:
         condition: service_healthy
 
     volumes:
-      - ../nginx/requesthole-realip.conf:/etc/nginx/conf.d/00-edge-realip.conf:ro
+      - ./nginx/realip.conf:/etc/nginx/conf.d/00-edge-realip.conf:ro
 
     networks:
       requesthole_private:
