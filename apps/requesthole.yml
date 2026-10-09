@@ -1,20 +1,68 @@
 services:
-  nginx:
-    # The standalone application publishes port 8080.
-    # Remove that binding when running behind Caddy.
-    ports: !reset []
+  requesthole-backend:
+    image: ghcr.io/grossnate/requesthole-backend:${REQUESTHOLE_VERSION:-latest}
+    restart: unless-stopped
 
-    # Add the shared edge network alongside backend_private.
+    environment:
+      DATABASE_PATH: /data/requesthole.db
+      TRUSTED_PROXY_ADDRESS: 172.31.255.2
+
+    volumes:
+      - requesthole_data:/data
+
     networks:
+      requesthole_private:
+        ipv4_address: 172.31.255.3
+        aliases:
+          - backend
+
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/holes').then(r => { if (!r.ok) process.exit(1); }).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  requesthole-nginx:
+    image: ghcr.io/grossnate/requesthole-frontend:${REQUESTHOLE_VERSION:-latest}
+    restart: unless-stopped
+
+    depends_on:
+      requesthole-backend:
+        condition: service_healthy
+
+    volumes:
+      - ../nginx/requesthole-realip.conf:/etc/nginx/conf.d/00-edge-realip.conf:ro
+
+    networks:
+      requesthole_private:
+        ipv4_address: 172.31.255.2
       edge:
         aliases:
           - requesthole-nginx
 
-    # Trust the edge proxy when interpreting client IP addresses.
-    volumes:
-      - /srv/server/nginx/requesthole-realip.conf:/etc/nginx/conf.d/00-edge-realip.conf:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
 
 networks:
+  requesthole_private:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.31.255.0/24
+
   edge:
     external: true
     name: edge
+
+volumes:
+  requesthole_data:
+    name: requesthole_data

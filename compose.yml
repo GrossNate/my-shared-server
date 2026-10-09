@@ -1,31 +1,30 @@
 name: shared-server
 
+include:
+  - ./apps/requesthole.yml
+
 services:
   caddy:
     image: caddy:2
     restart: unless-stopped
-
     ports:
       - "80:80"
       - "443:443"
-
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
-
     networks:
       edge:
         ipv4_address: 172.30.0.2
 
-volumes:
-  caddy_data:
-  caddy_config:
-
 networks:
   edge:
     name: edge
-    driver: bridge
     ipam:
       config:
         - subnet: 172.30.0.0/24
+
+volumes:
+  caddy_data:
+  caddy_config:
