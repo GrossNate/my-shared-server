@@ -20,3 +20,11 @@ requesthole.com {
 www.requesthole.com {
     redir https://requesthole.com{uri} permanent
 }
+
+gross.dev {
+  reverse_proxy grossdev:80
+}
+
+www.gross.dev {
+  redir https://gross.dev{uri} permanent
+}
