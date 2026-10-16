@@ -2,6 +2,7 @@ name: shared-server
 
 include:
   - ./apps/requesthole/compose.yml
+  - ./apps/grossdev/compose.yml
 
 services:
   caddy:
@@ -20,10 +21,8 @@ services:
 
 networks:
   edge:
+    external: true
     name: edge
-    ipam:
-      config:
-        - subnet: 172.30.0.0/24
 
 volumes:
   caddy_data:

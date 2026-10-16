@@ -1,0 +1,25 @@
+services:
+  grossdev:
+    image: ${GROSSDEV_IMAGE:?Set GROSSDEV_IMAGE in the root .env}
+    restart: unless-stopped
+
+    networks:
+      - edge
+
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - -q
+        - -O
+        - /dev/null
+        - http://127.0.0.1/
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+networks:
+  edge:
+    external: true
+    name: edge
