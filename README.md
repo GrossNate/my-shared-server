@@ -12,27 +12,33 @@ flowchart TD
     Visitors["Visitors"]
 
     subgraph VPS["Ubuntu VPS · Compose project: shared-server"]
-        Caddy["Caddy · 172.30.0.2"]
-        Grossdev["grossdev · port 80"]
+        Pull["docker compose pull"]
+
+        Caddy["Reverse proxy<br/>service: caddy<br/>172.30.0.2 · ports 80 / 443"]
+
+        Grossdev["gross.dev site<br/>service: grossdev<br/>port 80"]
 
         subgraph RequestHole["RequestHole"]
-            Frontend["requesthole-nginx<br/>edge + requesthole_private networks"]
-            Backend["requesthole-backend<br/>requesthole_private network only"]
-            Database[("requesthole_data<br/>SQLite database")]
-            Frontend -->|"private network · backend:3000"| Backend
-            Backend --- Database
+            Frontend["Frontend · nginx<br/>service: requesthole-nginx<br/>port 80"]
+            Backend["Backend<br/>service: requesthole-backend<br/>172.31.255.3 · port 3000"]
+            Database[("Application data<br/>volume: requesthole_data")]
         end
 
-        Certificates[("Caddy certificate and configuration volumes")]
-        Caddy --- Certificates
-        Caddy -->|"edge network · gross.dev"| Grossdev
-        Caddy -->|"edge network · requesthole.com"| Frontend
+        CaddyData[("Certificates and configuration<br/>volumes: caddy_data, caddy_config")]
     end
 
-    Visitors -->|"HTTP / HTTPS · host ports 80 / 443"| Caddy
-    Images -.->|"docker compose pull"| Grossdev
-    Images -.-> Frontend
-    Images -.-> Backend
+    Images -.-> Pull
+    Pull -.-> Grossdev
+    Pull -.-> Frontend
+    Pull -.-> Backend
+
+    Visitors -->|"HTTP / HTTPS"| Caddy
+    Caddy -->|"edge · gross.dev"| Grossdev
+    Caddy -->|"edge · requesthole.com"| Frontend
+    Frontend -->|"requesthole_private · frontend IP: 172.31.255.2"| Backend
+
+    Backend --- Database
+    Caddy --- CaddyData
 ```
 
 Caddy is the only container that publishes host ports. Public-facing application services share the `edge` network (`172.30.0.0/24`) and can communicate with one another; this network does not isolate applications.
