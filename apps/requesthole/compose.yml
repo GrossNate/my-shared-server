@@ -1,6 +1,6 @@
 services:
   requesthole-backend:
-    image: ghcr.io/grossnate/requesthole-backend:${REQUESTHOLE_VERSION:-latest}
+    image: "ghcr.io/grossnate/requesthole-backend:${REQUESTHOLE_VERSION:?Set REQUESTHOLE_VERSION in the root .env}"
     restart: unless-stopped
 
     environment:
@@ -28,7 +28,7 @@ services:
       start_period: 10s
 
   requesthole-nginx:
-    image: ghcr.io/grossnate/requesthole-frontend:${REQUESTHOLE_VERSION:-latest}
+    image: "ghcr.io/grossnate/requesthole-frontend:${REQUESTHOLE_VERSION:?Set REQUESTHOLE_VERSION in the root .env}"
     restart: unless-stopped
 
     depends_on:

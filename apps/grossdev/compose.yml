@@ -1,6 +1,6 @@
 services:
   grossdev:
-    image: ${GROSSDEV_IMAGE:?Set GROSSDEV_IMAGE in the root .env}
+    image: "ghcr.io/grossnate/grossdev:${GROSSDEV_VERSION:?Set GROSSDEV_VERSION in the root .env}"
     restart: unless-stopped
 
     networks:
