@@ -1,0 +1,17 @@
+{
+  "name": "shared-server-tooling",
+  "private": true,
+  "scripts": {
+    "format": "npm run format:prettier && npm run format:shfmt && npm run format:caddy",
+    "check:format": "npm run check:prettier && npm run check:shfmt && npm run check:caddy",
+    "format:prettier": "prettier . --write",
+    "check:prettier": "prettier . --check",
+    "format:shfmt": "shfmt -w bootstrap.sh",
+    "check:shfmt": "shfmt -d bootstrap.sh",
+    "format:caddy": "docker run --rm --mount \"type=bind,source=$PWD/Caddyfile,target=/work/Caddyfile\" --entrypoint caddy caddy:2.11.7 fmt --overwrite /work/Caddyfile",
+    "check:caddy": "docker run --rm --mount \"type=bind,source=$PWD/Caddyfile,target=/work/Caddyfile,readonly\" --entrypoint caddy caddy:2.11.7 fmt --diff /work/Caddyfile"
+  },
+  "devDependencies": {
+    "prettier": "3.9.10"
+  }
+}

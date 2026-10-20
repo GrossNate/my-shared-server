@@ -2,7 +2,10 @@
 set -Eeuo pipefail
 
 log() { printf '\n==> %s\n' "$*"; }
-die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+die() {
+  printf 'ERROR: %s\n' "$*" >&2
+  exit 1
+}
 
 if [[ "$EUID" -eq 0 ]]; then
   die "Run as your normal SSH user, not root."

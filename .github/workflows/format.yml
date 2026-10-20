@@ -1,0 +1,40 @@
+name: Formatting
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  format:
+    name: Check formatting
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Install shfmt
+        run: |
+          curl --fail --silent --show-error --location \
+            https://github.com/mvdan/sh/releases/download/v3.14.1/shfmt_v3.14.1_linux_amd64 \
+            --output "$RUNNER_TEMP/shfmt"
+          echo "76e77641faa025814b77f153b29796b8e6fa2fca03e0c76a691608b86c7ea7bf  $RUNNER_TEMP/shfmt" \
+            | sha256sum --check
+          sudo install -m 0755 "$RUNNER_TEMP/shfmt" /usr/local/bin/shfmt
+
+      - name: Check formatting
+        run: npm run check:format

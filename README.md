@@ -14,19 +14,19 @@ The goal is to make the server reproducible from GitHub, with minimal manual set
 
 ## Overview
 
-| Component | Technology |
-|---|---|
-| VPS provider | DreamHost |
-| Operating system | Ubuntu |
-| Server IP | `208.113.214.65` |
+| Component                 | Technology                             |
+| ------------------------- | -------------------------------------- |
+| VPS provider              | DreamHost                              |
+| Operating system          | Ubuntu                                 |
+| Server IP                 | `208.113.214.65`                       |
 | Infrastructure repository | `GrossNate/my-shared-server` (private) |
-| Server directory | `/srv/server` |
-| Container orchestration | Docker Compose |
-| Reverse proxy | Caddy |
-| TLS certificates | Let's Encrypt |
-| Container registry | GitHub Container Registry (GHCR) |
-| Continuous integration | GitHub Actions |
-| DNS provider | DreamHost |
+| Server directory          | `/srv/server`                          |
+| Container orchestration   | Docker Compose                         |
+| Reverse proxy             | Caddy                                  |
+| TLS certificates          | Let's Encrypt                          |
+| Container registry        | GitHub Container Registry (GHCR)       |
+| Continuous integration    | GitHub Actions                         |
+| DNS provider              | DreamHost                              |
 
 ### Architecture
 
@@ -91,14 +91,14 @@ The private infrastructure repository is cloned to `/srv/server`.
 
 ### File responsibilities
 
-| File | Responsibility |
-|---|---|
-| `bootstrap.sh` | Prepares Ubuntu, installs Docker and configures required host settings |
-| `compose.yml` | Defines Caddy and includes application configurations |
-| `Caddyfile` | Configures domain routing, HTTPS, and redirects |
-| `.env` | Stores nonsecret deployment settings such as application image versions |
-| `apps/requesthole/compose.yml` | Defines RequestHole's production containers, networks, volumes, and health checks |
-| `apps/requesthole/nginx/realip.conf` | Configures trusted proxy handling for RequestHole |
+| File                                 | Responsibility                                                                    |
+| ------------------------------------ | --------------------------------------------------------------------------------- |
+| `bootstrap.sh`                       | Prepares Ubuntu, installs Docker and configures required host settings            |
+| `compose.yml`                        | Defines Caddy and includes application configurations                             |
+| `Caddyfile`                          | Configures domain routing, HTTPS, and redirects                                   |
+| `.env`                               | Stores nonsecret deployment settings such as application image versions           |
+| `apps/requesthole/compose.yml`       | Defines RequestHole's production containers, networks, volumes, and health checks |
+| `apps/requesthole/nginx/realip.conf` | Configures trusted proxy handling for RequestHole                                 |
 
 Application-specific deployment files are grouped under `apps/<application>/`.
 
@@ -259,10 +259,10 @@ DNS records are managed through DreamHost.
 
 For RequestHole:
 
-| Hostname | Record | Value |
-|---|---|---|
-| `requesthole.com` | A | `208.113.214.65` |
-| `www.requesthole.com` | CNAME | `requesthole.com` |
+| Hostname              | Record | Value             |
+| --------------------- | ------ | ----------------- |
+| `requesthole.com`     | A      | `208.113.214.65`  |
+| `www.requesthole.com` | CNAME  | `requesthole.com` |
 
 Remove conflicting A or AAAA records for these hostnames if necessary, but preserve unrelated DNS records.
 
@@ -736,17 +736,17 @@ The following require external recovery or configuration:
 
 Run these commands from `/srv/server`.
 
-| Task | Command |
-|---|---|
-| Validate configuration | `docker compose config --quiet` |
-| Inspect configuration | `docker compose config` |
-| Show selected images | `docker compose config --images` |
-| Pull images | `docker compose pull` |
-| Deploy | `docker compose up -d` |
-| List containers | `docker compose ps` |
-| Follow logs | `docker compose logs -f --tail=100` |
-| Backend logs | `docker compose logs -f requesthole-backend` |
-| Stop services | `docker compose stop` |
+| Task                   | Command                                      |
+| ---------------------- | -------------------------------------------- |
+| Validate configuration | `docker compose config --quiet`              |
+| Inspect configuration  | `docker compose config`                      |
+| Show selected images   | `docker compose config --images`             |
+| Pull images            | `docker compose pull`                        |
+| Deploy                 | `docker compose up -d`                       |
+| List containers        | `docker compose ps`                          |
+| Follow logs            | `docker compose logs -f --tail=100`          |
+| Backend logs           | `docker compose logs -f requesthole-backend` |
+| Stop services          | `docker compose stop`                        |
 
 The normal update process is:
 
