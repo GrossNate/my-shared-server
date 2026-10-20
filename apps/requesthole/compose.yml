@@ -59,10 +59,6 @@ networks:
       config:
         - subnet: 172.31.255.0/24
 
-  edge:
-    external: true
-    name: edge
-
 volumes:
   requesthole_data:
     name: requesthole_data
