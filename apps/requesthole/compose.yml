@@ -42,8 +42,6 @@ services:
       requesthole_private:
         ipv4_address: 172.31.255.2
       edge:
-        aliases:
-          - requesthole-nginx
 
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
