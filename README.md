@@ -1,6 +1,6 @@
 # My Shared Server
 
-This private repository runs multiple websites and applications on one Ubuntu VPS. Docker Compose manages them as a single project, `shared-server`. Caddy routes requests by domain and manages HTTPS certificates.
+This repository runs multiple websites and applications on one Ubuntu VPS. Docker Compose manages them as a single project, `shared-server`. Caddy routes requests by domain and manages HTTPS certificates.
 
 Applications run from public GitHub Container Registry (GHCR) images. This repository contains their production configuration; application source code and image builds stay outside it.
 
@@ -83,6 +83,11 @@ Allow inbound traffic through the VPS provider's firewall and any host firewall:
 Preserve SSH access when changing firewall rules. Docker-published ports can bypass UFW rules, so application services must not publish additional host ports. See [Docker's firewall guidance](https://docs.docker.com/engine/install/ubuntu/#firewall-limitations).
 
 ### 2. Give the server read-only GitHub access
+
+> [!NOTE]
+> Originally I made my server repo private, hence this section on generating a
+> key, adding it to GitHub, etc. This is no longer necessary but leaving it here
+> for posterity.
 
 Install the tools needed to clone the repository:
 
