@@ -30,5 +30,5 @@ www.gross.dev {
 }
 
 health.gross.dev {
-		respond "OK" 200
+	respond "OK" 200
 }

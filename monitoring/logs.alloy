@@ -48,12 +48,113 @@ loki.source.docker "container_logs" {
   host          = "unix:///var/run/docker.sock"
   targets       = discovery.docker.container_logs.targets
   relabel_rules = discovery.relabel.container_logs.rules
-  forward_to    = [loki.write.grafana_cloud.receiver]
+  forward_to    = [loki.process.container_logs.receiver]
 
   labels = {
     job         = "integrations/docker",
     instance    = "vm2323",
     environment = "production",
+  }
+}
+
+loki.process "container_logs" {
+  forward_to = [loki.write.grafana_cloud.receiver]
+
+  // Recognize JSON logs, including Caddy and RequestHole.
+  // Non-JSON messages continue through the pipeline unchanged.
+  stage.json {
+    expressions = {
+      severity    = "level",
+      http_status = "res.statusCode",
+    }
+    drop_malformed = false
+  }
+
+  // Pino's numeric scale applies specifically to this backend.
+  stage.match {
+    selector = "{service_name=\"requesthole-backend\"}"
+
+    stage.template {
+      source = "severity"
+      template = `{{- if .Value -}}
+        {{- $levels := dict
+          "10" "trace"
+          "20" "debug"
+          "30" "info"
+          "40" "warn"
+          "50" "error"
+          "60" "fatal"
+        -}}
+        {{- get $levels .Value | default .Value -}}
+      {{- end -}}`
+    }
+  }
+
+  // Alloy emits logfmt rather than JSON.
+  stage.match {
+    selector = "{service_name=\"alloy\"}"
+
+    stage.logfmt {
+      mapping = {
+        severity = "level",
+      }
+    }
+  }
+
+  // Both frontend containers use nginx's text logging formats.
+  stage.match {
+    selector = "{service_name=~\"grossdev|requesthole-nginx\"}"
+
+    // Access records: extract status without indexing URLs or client IPs.
+    stage.regex {
+      expression = `^\S+ - \S+ \[[^\]]+\] "[^"]*" (?P<http_status>[1-5][0-9]{2}) \S+(?: .*)?$`
+    }
+
+    // Error-log records carry an explicit bracketed severity.
+    stage.regex {
+      expression = `^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} \[(?P<severity>debug|info|notice|warn|error|crit|alert|emerg)\]`
+    }
+
+    // Access records are informational events. Preserve explicit error levels.
+    // Startup messages without either format remain unclassified here.
+    stage.template {
+      source   = "severity"
+      template = `{{- if .http_status -}}info{{- else if .Value -}}{{ .Value }}{{- end -}}`
+    }
+  }
+
+  // Normalize textual levels, including nginx's severity vocabulary.
+  // An unrecognized value produces an empty result, which removes the
+  // extracted field and leaves Loki's automatic detection available.
+  stage.template {
+    source = "severity"
+    template = `{{- if .Value -}}
+      {{- $levels := dict
+        "trace" "trace"
+        "debug" "debug"
+        "info" "info"
+        "notice" "info"
+        "warn" "warn"
+        "warning" "warn"
+        "error" "error"
+        "err" "error"
+        "critical" "critical"
+        "crit" "critical"
+        "alert" "critical"
+        "emerg" "critical"
+        "fatal" "fatal"
+      -}}
+      {{- get $levels (ToLower .Value) -}}
+    {{- end -}}`
+  }
+
+  // These fields are attached to individual entries, not indexed labels.
+  // Original log bodies remain intact.
+  stage.structured_metadata {
+    values = {
+      detected_level = "severity",
+      http_status    = "http_status",
+    }
   }
 }
 
