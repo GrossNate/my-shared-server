@@ -6,6 +6,7 @@ prometheus.exporter.unix "integrations_node_exporter" {
   procfs_path = "/host/proc"
   sysfs_path  = "/host/sys"
   rootfs_path = "/host/root"
+  udev_data_path = "/host/root/run/udev/data"
 
   disable_collectors = ["ipvs", "btrfs", "infiniband", "xfs", "zfs"]
 
