@@ -2,6 +2,8 @@ services:
   requesthole-backend:
     image: "ghcr.io/grossnate/requesthole-backend:${REQUESTHOLE_VERSION:?Set REQUESTHOLE_VERSION in the root .env}"
     restart: unless-stopped
+    labels:
+      logging.app: requesthole
 
     environment:
       DATABASE_PATH: /data/requesthole.db
@@ -30,6 +32,8 @@ services:
   requesthole-nginx:
     image: "ghcr.io/grossnate/requesthole-frontend:${REQUESTHOLE_VERSION:?Set REQUESTHOLE_VERSION in the root .env}"
     restart: unless-stopped
+    labels:
+      logging.app: requesthole
 
     depends_on:
       requesthole-backend:
