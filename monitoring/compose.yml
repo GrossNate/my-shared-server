@@ -10,10 +10,12 @@ services:
       - run
       - --server.http.listen-addr=127.0.0.1:12345
       - --storage.path=/var/lib/alloy/data
-      - /etc/alloy/config.alloy
+      - /etc/alloy
     volumes:
       - ./config.alloy:/etc/alloy/config.alloy:ro
+      - ./logs.alloy:/etc/alloy/logs.alloy:ro
       - alloy_data:/var/lib/alloy/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - type: bind

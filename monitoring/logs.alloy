@@ -1,0 +1,69 @@
+discovery.docker "container_logs" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "30s"
+}
+
+discovery.relabel "container_logs" {
+  targets = []
+
+  // Container name is the fallback for containers outside Compose.
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.+)"
+    target_label  = "service_name"
+    replacement   = "$1"
+  }
+
+  // Compose service names stay stable when containers are recreated.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "(.+)"
+    target_label  = "service_name"
+    replacement   = "$1"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    regex         = "(.+)"
+    target_label  = "compose_project"
+    replacement   = "$1"
+  }
+
+  // Default the application name to the service name.
+  rule {
+    source_labels = ["service_name"]
+    target_label  = "app"
+  }
+
+  // An optional Docker label groups multiple services into one app.
+  rule {
+    source_labels = ["__meta_docker_container_label_logging_app"]
+    regex         = "(.+)"
+    target_label  = "app"
+    replacement   = "$1"
+  }
+}
+
+loki.source.docker "container_logs" {
+  host          = "unix:///var/run/docker.sock"
+  targets       = discovery.docker.container_logs.targets
+  relabel_rules = discovery.relabel.container_logs.rules
+  forward_to    = [loki.write.grafana_cloud.receiver]
+
+  labels = {
+    job         = "integrations/docker",
+    instance    = "vm2323",
+    environment = "production",
+  }
+}
+
+loki.write "grafana_cloud" {
+  endpoint {
+    url = "https://logs-prod-036.grafana.net/loki/api/v1/push"
+
+    basic_auth {
+      username = "1889767"
+      password = sys.env("GCLOUD_RW_API_KEY")
+    }
+  }
+}
