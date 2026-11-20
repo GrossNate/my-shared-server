@@ -1,5 +1,8 @@
 services:
   alloy:
+    extends:
+      file: ../compose.defaults.yml
+      service: logging-defaults
     image: grafana/alloy:v1.21.3
     restart: unless-stopped
     network_mode: host

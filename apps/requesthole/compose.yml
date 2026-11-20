@@ -1,5 +1,8 @@
 services:
   requesthole-backend:
+    extends:
+      file: ../../compose.defaults.yml
+      service: logging-defaults
     image: "ghcr.io/grossnate/requesthole-backend:${REQUESTHOLE_VERSION:?Set REQUESTHOLE_VERSION in the root .env}"
     restart: unless-stopped
     labels:
@@ -30,6 +33,9 @@ services:
       start_period: 10s
 
   requesthole-nginx:
+    extends:
+      file: ../../compose.defaults.yml
+      service: logging-defaults
     image: "ghcr.io/grossnate/requesthole-frontend:${REQUESTHOLE_VERSION:?Set REQUESTHOLE_VERSION in the root .env}"
     restart: unless-stopped
     labels:

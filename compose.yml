@@ -7,6 +7,9 @@ include:
 
 services:
   caddy:
+    extends:
+      file: ./compose.defaults.yml
+      service: logging-defaults
     image: caddy:2
     restart: unless-stopped
     ports:
