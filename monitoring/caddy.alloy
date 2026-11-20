@@ -1,0 +1,14 @@
+prometheus.scrape "integrations_caddy" {
+  targets = [{
+    __address__ = "172.30.0.2:9180",
+    instance    = "vm2323",
+    environment = "production",
+  }]
+
+  job_name        = "integrations/caddy"
+  scrape_interval = "60s"
+  scrape_timeout  = "10s"
+  metrics_path    = "/metrics"
+
+  forward_to = [prometheus.remote_write.metrics_service.receiver]
+}
