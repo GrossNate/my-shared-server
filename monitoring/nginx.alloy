@@ -41,7 +41,7 @@ prometheus.relabel "integrations_nginx" {
   // Go/runtime metrics that would describe the exporter itself.
   rule {
     source_labels = ["__name__"]
-    regex         = "up|scrape_duration_seconds|nginx_up|nginx_connections_.*|nginx_http_requests_total"
+    regex         = "up|scrape_duration_seconds|nginx_exporter_build_info|nginx_up|nginx_connections_.*|nginx_http_requests_total"
     action        = "keep"
   }
 
