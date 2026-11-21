@@ -37,15 +37,14 @@ prometheus.scrape "integrations_nginx" {
 prometheus.relabel "integrations_nginx" {
   forward_to = [prometheus.remote_write.metrics_service.receiver]
 
-  // Collect nginx statistics and scrape health, excluding exporter
-  // Go/runtime metrics that would describe the exporter itself.
+  // Keep nginx statistics, build information, and scrape health.
   rule {
     source_labels = ["__name__"]
     regex         = "up|scrape_duration_seconds|nginx_exporter_build_info|nginx_up|nginx_connections_.*|nginx_http_requests_total"
     action        = "keep"
   }
 
-  // The shared exporter attaches addr to each nginx instance's metrics.
+  // Identify the nginx service from the exporter's per-target address.
   rule {
     source_labels = ["addr"]
     regex         = "http://([^:/]+):8080/stub_status"
@@ -53,11 +52,19 @@ prometheus.relabel "integrations_nginx" {
     replacement   = "$1"
   }
 
-  // Give the knowledge graph a distinct identity for each service.
   rule {
     source_labels = ["service_name"]
     regex         = "(.+)"
     target_label  = "service"
+    replacement   = "$1"
+  }
+
+  // Give each application's metrics a separate Prometheus job.
+  // Exporter-wide metrics without service_name keep integrations/nginx.
+  rule {
+    source_labels = ["service_name"]
+    regex         = "(.+)"
+    target_label  = "job"
     replacement   = "$1"
   }
 
