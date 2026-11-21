@@ -18,6 +18,7 @@ services:
       - ./config.alloy:/etc/alloy/config.alloy:ro
       - ./logs.alloy:/etc/alloy/logs.alloy:ro
       - ./caddy.alloy:/etc/alloy/caddy.alloy:ro
+      - ./nginx.alloy:/etc/alloy/nginx.alloy:ro
       - alloy_data:/var/lib/alloy/data
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /proc:/host/proc:ro
@@ -29,6 +30,25 @@ services:
         bind:
           propagation: rslave
       - /etc/machine-id:/etc/machine-id:ro
+
+  nginx-exporter:
+    extends:
+      file: ../compose.defaults.yml
+      service: logging-defaults
+    image: nginx/nginx-prometheus-exporter:1.5.3
+    restart: unless-stopped
+    command:
+      - --nginx.scrape-uri=http://grossdev:8080/stub_status
+      - --nginx.scrape-uri=http://requesthole-nginx:8080/stub_status
+    depends_on:
+      grossdev:
+        condition: service_healthy
+      requesthole-nginx:
+        condition: service_healthy
+    expose:
+      - "9113"
+    networks:
+      - edge
 
 volumes:
   alloy_data:

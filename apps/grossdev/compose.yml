@@ -6,6 +6,9 @@ services:
     image: "ghcr.io/grossnate/grossdev:${GROSSDEV_VERSION:?Set GROSSDEV_VERSION in the root .env}"
     restart: unless-stopped
 
+    volumes:
+      - ../../monitoring/nginx-status.conf:/etc/nginx/conf.d/monitoring-status.conf:ro
+
     networks:
       - edge
 

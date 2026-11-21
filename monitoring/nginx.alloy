@@ -1,0 +1,78 @@
+// Reuse the Docker discovery already used for container logs.
+discovery.relabel "nginx_exporter" {
+  targets = discovery.docker.container_logs.targets
+
+  // Select this project's shared exporter on edge, port 9113.
+  rule {
+    source_labels = [
+      "__meta_docker_container_label_com_docker_compose_project",
+      "__meta_docker_container_label_com_docker_compose_service",
+      "__meta_docker_network_name",
+      "__meta_docker_port_private",
+    ]
+    regex  = "shared-server;nginx-exporter;edge;9113"
+    action = "keep"
+  }
+
+  rule {
+    target_label = "instance"
+    replacement  = "vm2323"
+  }
+
+  rule {
+    target_label = "environment"
+    replacement  = "production"
+  }
+}
+
+prometheus.scrape "integrations_nginx" {
+  targets         = discovery.relabel.nginx_exporter.output
+  job_name        = "integrations/nginx"
+  scrape_interval = "60s"
+  scrape_timeout  = "15s"
+
+  forward_to = [prometheus.relabel.integrations_nginx.receiver]
+}
+
+prometheus.relabel "integrations_nginx" {
+  forward_to = [prometheus.remote_write.metrics_service.receiver]
+
+  // Collect nginx statistics and scrape health, excluding exporter
+  // Go/runtime metrics that would describe the exporter itself.
+  rule {
+    source_labels = ["__name__"]
+    regex         = "up|scrape_duration_seconds|nginx_up|nginx_connections_.*|nginx_http_requests_total"
+    action        = "keep"
+  }
+
+  // The shared exporter attaches addr to each nginx instance's metrics.
+  rule {
+    source_labels = ["addr"]
+    regex         = "http://([^:/]+):8080/stub_status"
+    target_label  = "service_name"
+    replacement   = "$1"
+  }
+
+  // Give the knowledge graph a distinct identity for each service.
+  rule {
+    source_labels = ["service_name"]
+    regex         = "(.+)"
+    target_label  = "service"
+    replacement   = "$1"
+  }
+
+  // Match the application grouping already used by container logs.
+  rule {
+    source_labels = ["service_name"]
+    regex         = "(.+)"
+    target_label  = "app"
+    replacement   = "$1"
+  }
+
+  rule {
+    source_labels = ["service_name"]
+    regex         = "requesthole-nginx"
+    target_label  = "app"
+    replacement   = "requesthole"
+  }
+}

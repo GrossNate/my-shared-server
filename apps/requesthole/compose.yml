@@ -47,6 +47,7 @@ services:
 
     volumes:
       - ./nginx/realip.conf:/etc/nginx/conf.d/00-edge-realip.conf:ro
+      - ../../monitoring/nginx-status.conf:/etc/nginx/conf.d/monitoring-status.conf:ro
 
     networks:
       requesthole_private:
