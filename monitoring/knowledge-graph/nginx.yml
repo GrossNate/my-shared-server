@@ -1,0 +1,63 @@
+name: shared-server-nginx.yml
+
+entities:
+  - type: Service
+    name: service_name
+    scope:
+      env: asserts_env
+
+    definedBy:
+      - query: |
+          group by (service_name, job, asserts_env) (
+            label_replace(
+              nginx_up{
+                job=~"grossdev|requesthole-nginx",
+                environment="production",
+                service_name!=""
+              },
+              "asserts_env", "$1", "environment", "(.+)"
+            )
+          )
+        labelValues:
+          job: job
+          service_name: service_name
+        literals:
+          service_type: nginx
+
+  - type: ServiceInstance
+    name: nginx_instance
+    scope:
+      env: asserts_env
+
+    definedBy:
+      - query: |
+          label_join(
+            group by (service_name, job, instance, asserts_env) (
+              label_replace(
+                nginx_up{
+                  job=~"grossdev|requesthole-nginx",
+                  environment="production",
+                  service_name!=""
+                },
+                "asserts_env", "$1", "environment", "(.+)"
+              )
+            ),
+            "nginx_instance", ":", "service_name", "instance"
+          )
+        labelValues:
+          job: job
+          service: service_name
+          service_name: service_name
+          instance: instance
+          nodename: instance
+        literals:
+          service_type: nginx
+
+relations:
+  - type: CONTROLS
+    startEntityType: Service
+    endEntityType: ServiceInstance
+    definedBy:
+      source: PROPERTY_MATCH
+      startEntityProperties: [name, env]
+      endEntityProperties: [service, env]
