@@ -1,411 +1,259 @@
 # My Shared Server
 
-Production configuration for gross.dev and RequestHole on one Ubuntu VPS.
+This repository configures an Ubuntu VPS for hosting multiple applications. Each app supplies its own container images. To add an app, give it a Compose file, include it in the shared project, and add a Caddy route and DNS record. Existing apps can stay as they are.
 
-Docker Compose manages the shared-server project. Caddy handles routing and HTTPS. Grafana Alloy sends host metrics, web-server metrics, and container logs to Grafana Cloud.
+gross.dev and RequestHole are the first two apps. Both use the same Caddy proxy and Grafana Cloud monitoring.
 
-Application source code and image builds live in their own repositories. Deployments are manual.
+[Update an app](#update-an-app) · [Apply server changes](#apply-server-changes) · [Check status and logs](#check-status-and-logs) · [Add an app](#add-an-app) · [Set up a VPS](#set-up-a-vps)
 
-## Everyday commands
+## Update an app
 
-Run server commands from /srv/server as your regular SSH user:
+Run these commands on the VPS as your regular SSH user. Each block starts in `/srv/server` and stops if a command fails. `dotenvx run --` supplies the decrypted Grafana Cloud credential that the Compose project requires.
 
+### gross.dev
+
+Wait for the [grossdev image build](https://github.com/GrossNate/grossdev/actions/workflows/publish-image.yml) to succeed.
+
+```bash
+cd /srv/server &&
+  dotenvx run -- docker compose pull grossdev &&
+  dotenvx run -- docker compose up -d --wait --pull never grossdev &&
+  curl -fsS -o /dev/null https://gross.dev/
+```
+
+### RequestHole
+
+Wait for the [RequestHole image build](https://github.com/GrossNate/requesthole/actions/workflows/docker.yml) to finish publishing both images. The commands pull both before updating either container.
+
+```bash
+cd /srv/server &&
+  dotenvx run -- docker compose pull requesthole-backend requesthole-nginx &&
+  dotenvx run -- docker compose up -d --wait --pull never requesthole-backend requesthole-nginx &&
+  curl -fsS -o /dev/null https://requesthole.com/
+```
+
+For a functional check, open RequestHole, create a hole, send it a request, and confirm the request appears.
+
+Both apps currently select `latest` in `.env`. Pulling downloads the images. Compose replaces containers whose image or service configuration has changed, which can briefly interrupt the app. `--wait` checks container health where configured. It does not automatically roll back a failed deployment. See [Docker Compose up](https://docs.docker.com/reference/cli/docker/compose/up/).
+
+### Deploy a specific version or roll back
+
+Change the app’s version in `.env` locally, commit and push, then run `git pull --ff-only` on the VPS before repeating the app’s update block.
+
+| App         | Variable              | Published commit tag                |
+| ----------- | --------------------- | ----------------------------------- |
+| gross.dev   | `GROSSDEV_VERSION`    | `sha-<full commit SHA>`             |
+| RequestHole | `REQUESTHOLE_VERSION` | `<full commit SHA>` for both images |
+
+Use a previously working tag to roll back. Reverting an image does not undo database migrations.
+
+## Apply server changes
+
+After pushing configuration changes, fetch and validate them on the VPS.
+
+```bash
+cd /srv/server &&
+  git pull --ff-only &&
+  dotenvx run -- docker compose config --quiet
+```
+
+A Git pull updates the checkout. Use the relevant command below to apply the change to running services. For changes spanning several components, start any new upstream services before reloading Caddy.
+
+### Caddy routes or domains
+
+```bash
+cd /srv/server &&
+  dotenvx run -- docker compose exec -T caddy \
+    caddy reload --config - --adapter caddyfile < Caddyfile
+```
+
+This reads the current `Caddyfile` from the host, even if Git replaced the file underneath the container’s bind mount. Caddy reloads without restarting the container and keeps its previous configuration if it rejects the new one. See [Caddy reload](https://caddyserver.com/docs/command-line#caddy-reload).
+
+### Compose service settings
+
+```bash
+cd /srv/server &&
+  dotenvx run -- docker compose up -d --wait --pull never &&
+  dotenvx run -- docker compose ps
+```
+
+This uses images already on the VPS. If you added or changed an image reference, pull that service’s image first with `dotenvx run -- docker compose pull <service>`. Use the app-specific update block for application image changes. Plan shared network changes separately because they can affect several services.
+
+### Alloy configuration or Grafana Cloud credential
+
+```bash
+cd /srv/server &&
+  dotenvx run -- docker compose run --rm --no-deps alloy validate /etc/alloy &&
+  dotenvx run -- docker compose up -d --wait --pull never --force-recreate alloy &&
+  dotenvx run -- docker compose logs --tail=50 alloy
+```
+
+Recreating Alloy picks up the current credential and any mounted files Git replaced. Then check `curl -fsS http://127.0.0.1:12345/-/healthy` on the VPS and confirm fresh logs and metrics in Grafana Cloud. Local validation does not test delivery to Grafana Cloud. See [Alloy validation](https://grafana.com/docs/alloy/latest/reference/cli/validate/) and [Alloy health endpoints](https://grafana.com/docs/alloy/latest/reference/http/).
+
+### Mounted nginx configuration
+
+If `monitoring/nginx-status.conf` changed, recreate both nginx frontends.
+
+```bash
+cd /srv/server &&
+  dotenvx run -- docker compose up -d --wait --pull never --force-recreate grossdev requesthole-nginx
+```
+
+If only `apps/requesthole/nginx/realip.conf` changed, recreate the RequestHole frontend.
+
+```bash
+cd /srv/server &&
+  dotenvx run -- docker compose up -d --wait --pull never --force-recreate requesthole-nginx
+```
+
+Service recreation picks up the current mounted files and can briefly interrupt the affected sites.
+
+> [!CAUTION]
+> Use `up` for routine changes. `restart` reuses existing containers and does not apply new images or Compose settings. `down` stops the entire project, and `down -v` can delete persistent data.
+
+## Check status and logs
+
+Run these on the VPS.
+
+```bash
 cd /srv/server
-
-Use dotenvx run -- docker compose for Compose commands. It decrypts the Grafana Cloud credential from .env before Compose reads the configuration.
-
-Run commands in order and stop if one fails.
-
-### Update gross.dev
-
-Wait for the application's image-publishing workflow to finish successfully, then run:
-
-dotenvx run -- docker compose pull grossdev
-dotenvx run -- docker compose up -d --wait --pull never grossdev
-curl --fail --silent --show-error --output /dev/null <https://gross.dev/>
-
-### Update RequestHole
-
-Wait for both application images to publish successfully, then run:
-
-dotenvx run -- docker compose pull requesthole-backend requesthole-nginx
-dotenvx run -- docker compose up -d --wait --pull never requesthole-backend requesthole-nginx
-curl --fail --silent --show-error --output /dev/null <https://requesthole.com/>
-
-Open RequestHole, create a hole, send a request, and confirm it appears.
-
-Both applications currently use latest. Pulling downloads the currently published images; up replaces containers whose images changed. Pulling alone leaves running containers untouched.
-
-These updates can briefly interrupt the affected application. Health checks do not automatically roll back a failed deployment.
-
-### Apply changes from this repository
-
-After committing and pushing configuration changes, fetch them on the VPS:
-
-git pull --ff-only
-dotenvx run -- docker compose config --quiet
-
-Then use the relevant procedure below.
-
-| Changed files                                  | Apply with                             |
-| ---------------------------------------------- | -------------------------------------- |
-| Caddyfile                                      | Reload Caddy                           |
-| Compose files or application version variables | Apply Compose configuration            |
-| monitoring/*.alloy or Grafana Cloud credential | Recreate Alloy                         |
-| nginx configuration mounted into applications  | Recreate the affected nginx containers |
-| Grafana dashboard or Knowledge Graph files     | Apply separately in Grafana Cloud      |
-| Documentation or formatting tools              | No server action                       |
-
-A Git pull updates files on disk. It does not reload running services.
-
-#### Reload Caddy
-
-dotenvx run -- docker compose exec -T caddy \
-caddy reload --config - --adapter caddyfile < Caddyfile
-
-This sends the current host file directly to Caddy. It avoids stale bind-mounted contents when Git replaces the file.
-
-Caddy reload (<https://caddyserver.com/docs/command-line#caddy-reload>) applies valid configuration without restarting the container. A rejected configuration leaves the previous configuration active.
-
-If adding an application, start its services before reloading routes that point to them.
-
-#### Apply Compose configuration
-
-dotenvx run -- docker compose up -d --wait --pull never
-dotenvx run -- docker compose ps
-
-This applies service configuration changes using locally available images. To deploy a new image, pull it first using the application commands above.
-
-Review shared-network changes before applying them: they may affect multiple applications.
-
-Compose does not detect changes to the contents of bind-mounted configuration files. Use the explicit procedures below for those files.
-
-#### Apply Alloy configuration or credential changes
-
-Validate the current files in a temporary container:
-
-dotenvx run -- docker compose run --rm --no-deps alloy validate /etc/alloy
-
-Then recreate Alloy:
-
-dotenvx run -- docker compose up -d --wait --pull never --force-recreate alloy
-curl --fail --silent --show-error <http://127.0.0.1:12345/-/healthy>
-dotenvx run -- docker compose logs --tail=50 alloy
-
-Alloy mounts individual configuration files. Recreating the container ensures it reads files replaced by Git and receives the current credential.
-
-Configuration validation checks structure; it does not prove Grafana Cloud accepts the credential or receives telemetry. Confirm fresh data in Grafana Cloud afterward.
-
-#### Apply mounted nginx configuration
-
-For changes to monitoring/nginx-status.conf, recreate both frontend containers:
-
-dotenvx run -- docker compose up -d --wait --pull never --force-recreate grossdev requesthole-nginx
-
-For changes only to apps/requesthole/nginx/realip.conf:
-
-dotenvx run -- docker compose up -d --wait --pull never --force-recreate requesthole-nginx
-
-These commands briefly interrupt the affected sites.
-
-### Check status and logs
-
 dotenvx run -- docker compose ps
 dotenvx run -- docker compose logs --tail=100 caddy
 dotenvx run -- docker compose logs --tail=100 grossdev
 dotenvx run -- docker compose logs --tail=100 requesthole-backend requesthole-nginx
 dotenvx run -- docker compose logs --tail=100 alloy nginx-exporter
+```
 
-Follow RequestHole logs while reproducing a problem:
+Add `--follow` to a `logs` command to stream new entries. Check public HTTPS and Alloy separately.
 
-dotenvx run -- docker compose logs --follow --tail=100 requesthole-backend requesthole-nginx
+```bash
+curl -fsS https://health.gross.dev/
+curl -fsS -o /dev/null https://gross.dev/
+curl -fsS -o /dev/null https://requesthole.com/
+curl -fsS http://127.0.0.1:12345/-/healthy
+```
 
-Check public endpoints and Alloy:
+`health.gross.dev` is served by Caddy and verifies its public HTTPS route. The site URLs check their respective routes. The Alloy endpoint is reachable from the VPS.
 
-curl --fail --silent --show-error <https://health.gross.dev/>
-curl --fail --silent --show-error --output /dev/null <https://gross.dev/>
-curl --fail --silent --show-error --output /dev/null <https://requesthole.com/>
-curl --fail --silent --show-error <http://127.0.0.1:12345/-/healthy>
+## Add an app
 
-health.gross.dev checks the public route to Caddy. It does not check either application's behavior.
+1. Create `apps/<app>/compose.yml`. Start with [grossdev](apps/grossdev/compose.yml) for a single service or [RequestHole](apps/requesthole/compose.yml) for a frontend and backend. Use unique service names, define a health check, and use named volumes for persistent data.
+2. Add the app’s Compose file to `include` in the [root Compose file](compose.yml). If the image reference uses a version variable, add its value to `.env`.
+3. Attach the public-facing service to `edge`. Let Caddy handle public traffic. Put private dependencies on an app-specific network and leave their host ports unpublished.
+4. Add the domain to `Caddyfile` and point its DNS at the VPS. In the Caddy route, use the Compose service name and its internal listening port.
+5. Commit and push. On the VPS, fetch and validate the changes, pull the new app’s images, and run `up -d --wait` for its services. Reload Caddy once the app is ready, then test the public URL.
 
-> [!CAUTION]
-> Do not use docker compose down for routine updates. It stops the whole project. Adding -v can delete persistent volumes.
->
-> Use targeted pull and up commands. restart does not deploy new images or apply changed Compose settings.
+All deployment commands run from the root project at `/srv/server`. Docker’s [Compose include reference](https://docs.docker.com/reference/compose-file/include/) explains how it resolves each app’s local paths.
 
-## Configuration and secrets
+Alloy discovers container logs automatically. Use the same `logging.app` label across an app’s services to group their logs. Adding nginx metrics is optional and requires a scrape target in [monitoring/compose.yml](monitoring/compose.yml).
 
-| File      | Purpose                                                                        | Committed? |
-| --------- | ------------------------------------------------------------------------------ | ---------- |
-| .env      | Application image tags, dotenvx public key, encrypted Grafana Cloud credential | Yes        |
-| .env.keys | Private key used to decrypt .env                                               | No         |
+### Validate changes locally
 
-The application version variables are plaintext:
-
-REQUESTHOLE_VERSION=latest
-GROSSDEV_VERSION=latest
-
-GCLOUD_RW_API_KEY is encrypted. Alloy uses it to send metrics and logs to the configured Grafana Cloud endpoints.
-
-Keep a secure copy of the existing .env.keys outside this repository. A new clone does not include it. Generating a different key will not decrypt the existing credential.
-
-dotenvx (<https://dotenvx.com/docs/cli/run/>) decrypts values when running a command:
-
-dotenvx run -- docker compose config --quiet
-
-Use config --quiet to validate configuration and config --images to inspect image references:
-
-dotenvx run -- docker compose config --images
-
-Avoid sharing unredacted output from docker compose config or container inspection: resolved configuration can contain the decrypted credential.
-
-### Select a version or roll back an application
-
-Edit the application's version variable in .env in your local checkout, preserving the encrypted credential and public key. Commit and push the change.
-
-The current image workflows publish these commit tags:
-
-| Application                      | Tag format            |
-| -------------------------------- | --------------------- |
-| grossdev                         | sha-<full commit SHA> |
-| RequestHole frontend and backend | <full commit SHA>     |
-
-On the VPS, pull the configuration change, then follow the relevant application-update procedure.
-
-Both RequestHole images must have the selected tag. latest moves as images are published; a previous commit tag lets you select a known revision.
-
-Rollback uses the same deployment commands with the previous tag. Reverting an image does not reverse database migrations.
-
-### Change the Grafana Cloud credential
-
-Use dotenvx set (<https://dotenvx.com/docs/cli/set/>) to update GCLOUD_RW_API_KEY with encryption. Commit the encrypted .env, keeping .env.keys out of Git.
-
-Pull the change on the VPS and follow “Apply Alloy configuration or credential changes.”
-
-## Observability
-
-Grafana Cloud stores the collected metrics and logs. Grafana and Loki are not hosted on this VPS.
-
-| Signal                                      | Source                                     | Configuration                                                                |
-| ------------------------------------------- | ------------------------------------------ | ---------------------------------------------------------------------------- |
-| Host CPU, memory, disk, and network metrics | Alloy's Unix exporter                      | monitoring/config.alloy                                                      |
-| Container stdout/stderr logs                | Docker discovery and Alloy's Loki pipeline | monitoring/logs.alloy                                                        |
-| HTTP request metrics by site                | Caddy metrics endpoint                     | Caddyfile, monitoring/caddy.alloy                                            |
-| nginx connections and request counts        | Shared nginx exporter                      | monitoring/nginx-status.conf, monitoring/nginx.alloy, monitoring/compose.yml |
-
-Metrics are scraped every 60 seconds. Container discovery refreshes every 30 seconds.
-
-Telemetry identifies this host as vm2323 and the environment as production. When replacing or adding a host, review those labels in the Alloy files.
-
-### Find application logs
-
-In Grafana Cloud's Loki query editor, use:
-
-{compose_project="shared-server", app="requesthole"}
-
-For gross.dev:
-
-{compose_project="shared-server", service_name="grossdev"}
-
-Logs carry stable Compose service names. Both RequestHole services share app="requesthole".
-
-The pipeline normalizes recognized severity levels and attaches detected_level and http_status as structured metadata when available. It preserves original log messages; URLs and client IPs may remain in those messages.
-
-All services inherit local Docker log rotation from compose.defaults.yml: JSON logs, 10 MB per file, up to three files per container.
-
-### Dashboards and Grafana Cloud configuration
-
-monitoring/shared-server-overview.json is a saved Grafana dashboard resource titled GrossNate Shared Server Overview. It includes public availability, host capacity, request metrics, recent logs, and alert information.
-
-monitoring/knowledge-graph/nginx.yml contains the nginx Knowledge Graph configuration.
-
-These files are not deployed by Compose. Changes must be applied separately in Grafana Cloud. After editing the dashboard in Grafana Cloud, export the updated resource back into the repository.
-
-Synthetic checks, alert rules, notification routing, and data sources are not fully provisioned by this repository. Recreating the VPS alone does not recreate those Grafana Cloud settings.
-
-### Monitoring endpoints
-
-| Endpoint                                        | Reachable from                         |
-| ----------------------------------------------- | -------------------------------------- |
-| Alloy UI and health endpoints: 127.0.0.1:12345  | VPS                                    |
-| Caddy metrics: 172.30.0.2:9180/metrics          | VPS and containers that can reach edge |
-| nginx stub status: port 8080, path /stub_status | Allowed clients on the Docker network  |
-| nginx exporter: port 9113                       | edge network                           |
-
-No additional public firewall ports are needed for monitoring.
-
-Alloy uses host networking and reads host filesystems and the Docker socket. Treat it as a privileged component, even though its mounts are configured read-only.
-
-## Architecture and files
-
-Internet → Caddy → grossdev
-→ requesthole-nginx → requesthole-backend → requesthole_data
-
-Host metrics ────────────────┐
-Docker container logs ───────┤
-Caddy metrics ───────────────┼→ Alloy → Grafana Cloud
-nginx → nginx-exporter ──────┘
-
-Caddy publishes ports 80 and 443. Alloy uses host networking, with its HTTP listener bound to localhost.
-
-Public-facing application containers share the edge network. It allows communication between those containers; it does not isolate applications from one another.
-
-RequestHole's backend uses the internal requesthole_private network and has no direct internet connection.
-
-Fixed addresses support the trusted-proxy chain:
-
-- Caddy: 172.30.0.2
-- RequestHole nginx: 172.31.255.2
-- RequestHole backend: 172.31.255.3
-
-Preserve these addresses unless updating the corresponding trust configuration.
-
-| Location                     | Purpose                                                             |
-| ---------------------------- | ------------------------------------------------------------------- |
-| compose.yml                  | Project, shared network, Caddy, and application includes            |
-| compose.defaults.yml         | Shared Docker logging settings                                      |
-| Caddyfile                    | Domains, routing, HTTPS, and Caddy metrics                          |
-| apps/                        | Application services and supporting configuration                   |
-| monitoring/                  | Alloy, nginx exporter, dashboard, and Knowledge Graph configuration |
-| bootstrap.sh                 | Docker installation and initial server directories                  |
-| .github/workflows/format.yml | Formatting checks; no deployment                                    |
-
-## Change or add an application
-
-Make configuration changes locally, commit and push them, then apply them on the VPS.
-
-For a new application:
-
-1. Add apps/<application>/compose.yml with its image, required environment, health check, and storage.
-2. Include it in the root compose.yml, preserving the existing application and monitoring includes.
-3. Add any image-version variable to .env.
-4. Connect its public-facing service to edge, without publishing host ports.
-5. Add domain routing to Caddyfile and configure DNS.
-6. Start the application, reload Caddy, and verify public behavior.
-
-Use the existing application files as examples. Launch everything from the root project rather than starting included Compose files separately.
-
-Use named volumes for persistent application data. Place supporting services on application-specific networks. internal: true prevents direct external connectivity, so use it only when those services do not need outbound access.
-
-New Compose containers are discovered automatically for logs. An optional logging.app Docker label groups multiple services under one application.
-
-For another nginx service, mount monitoring/nginx-status.conf and add its scrape URI to nginx-exporter in monitoring/compose.yml.
-
-### Local checks
-
-Formatting requires Node.js/npm, Docker, and shfmt 3.14.1. Compose validation also requires dotenvx and the decryption key.
-
+```bash
 npm ci
 npm run format
 npm run check:format
 dotenvx run -- docker compose config --quiet
+```
 
-Formatting checks do not validate application behavior, Alloy configuration, or Grafana Cloud connectivity.
+Formatting uses Node.js/npm, Docker, and shfmt 3.14.1. Compose validation needs dotenvx and the matching key. The GitHub workflow checks formatting. Deployments are manual.
 
-## Set up a new VPS
+## Configuration and secrets
 
-Use a Docker-supported Ubuntu release, a regular SSH user with sudo access, and images compatible with the host architecture. The current application publishing workflows build for linux/amd64.
+| File        | Contents                                                                           |
+| ----------- | ---------------------------------------------------------------------------------- |
+| `.env`      | Committed app image tags, dotenvx public key, and encrypted `GCLOUD_RW_API_KEY`    |
+| `.env.keys` | Private decryption key. Git ignores this file. Keep a secure copy outside the VPS. |
 
-### 1. Configure network access
+`dotenvx run --` decrypts the Grafana Cloud credential for Compose, which passes it to Alloy. A new clone needs the existing matching `.env.keys` file. See [dotenvx run](https://dotenvx.com/docs/cli/run/).
 
-Allow inbound TCP on:
+Use `docker compose config --quiet` through dotenvx for validation or `docker compose config --images` through dotenvx to list image references. Full resolved configuration and container inspection can expose the decrypted credential.
 
-- Your SSH port
-- Port 80
-- Port 443
+To rotate the Grafana Cloud credential, use [dotenvx set](https://dotenvx.com/docs/cli/set/) to update `GCLOUD_RW_API_KEY` with encryption. Commit the encrypted `.env`, pull it on the VPS, and follow the Alloy update procedure.
 
-Preserve SSH access while changing firewall rules. Application and monitoring ports should remain unpublished.
+## Observability
 
-Docker-published ports can bypass UFW rules. See Docker's firewall guidance (<https://docs.docker.com/engine/install/ubuntu/#firewall-limitations>).
+Open **GrossNate Shared Server Overview** in Grafana Cloud to see availability, host capacity, HTTP traffic, container logs, and alerts.
 
-Point these DNS names at the VPS:
+| Signal                              | How it gets to Grafana Cloud                                                           |
+| ----------------------------------- | -------------------------------------------------------------------------------------- |
+| Host CPU, memory, disk, and network | Alloy’s Unix exporter                                                                  |
+| HTTP request metrics by site        | Alloy scrapes Caddy on `172.30.0.2:9180`                                               |
+| nginx requests and connections      | `nginx-exporter` reads `/stub_status` from both frontends. Alloy scrapes the exporter. |
+| Container stdout and stderr         | Alloy discovers Docker containers and sends their logs to Loki                         |
 
-| Name                | Record                            |
-| ------------------- | --------------------------------- |
-| gross.dev           | A record for the VPS IPv4 address |
-| <www.gross.dev>       | CNAME to gross.dev                |
-| requesthole.com     | A record for the VPS IPv4 address |
-| <www.requesthole.com> | CNAME to requesthole.com          |
-| health.gross.dev    | A record for the VPS IPv4 address |
+Alloy listens on `127.0.0.1:12345`. Metrics and exporter ports stay off the public firewall. The Alloy configuration labels this VPS `vm2323` and the environment `production`. Review those labels when moving to a different host.
 
-Keep AAAA records only if IPv6 reaches this server.
+### Find logs in Grafana Cloud
 
-### 2. Clone and install Docker
+In Explore, select the Loki data source. To see both RequestHole services:
 
-The repository is public; cloning over HTTPS requires no GitHub deploy key.
+```logql
+{compose_project="shared-server", app="requesthole"}
+```
 
-sudo apt-get update
-sudo apt-get install -y git curl ca-certificates
+For gross.dev:
 
-sudo install -d -o "$USER" -g "$(id -gn)" -m 0755 /srv/server
+```logql
+{compose_project="shared-server", service_name="grossdev"}
+```
 
-git clone <https://github.com/GrossNate/my-shared-server.git> /srv/server
+The pipeline preserves original log messages and attaches normalized severity and HTTP status as structured metadata when it can extract them. Local Docker logs rotate at 10 MB per file, with up to three files per container. See [compose.defaults.yml](compose.defaults.yml).
 
-cd /srv/server
-./bootstrap.sh
+### Grafana Cloud settings
 
-Bootstrap installs Docker Engine and Compose, enables Docker at boot, and adds your user to the Docker group. It does not configure DNS, firewall rules, dotenvx, or secrets.
+[The dashboard export](monitoring/shared-server-overview.json) and [nginx Knowledge Graph configuration](monitoring/knowledge-graph/nginx.yml) are kept in this repository for reference. Manage them in Grafana Cloud. Compose applies the VPS collector configuration only. Review synthetic checks, data sources, alerts, and notifications separately when restoring monitoring.
 
-Log out and reconnect, then verify:
+## Network and data
 
-docker version
-docker compose version
-docker ps
+Caddy publishes ports 80 and 443 and forwards traffic over `edge`. Services on `edge` can reach one another. RequestHole’s backend is on the separate internal `requesthole_private` network.
 
-Docker group membership grants privileges equivalent to root.
+Preserve the Caddy address `172.30.0.2` and the RequestHole nginx address `172.31.255.2` when making network changes. RequestHole uses those addresses to trust its proxy chain and recover the client IP.
 
-### 3. Install dotenvx and restore the key
+| Volume                       | Data                         |
+| ---------------------------- | ---------------------------- |
+| `requesthole_data`           | RequestHole database         |
+| `caddy_data`, `caddy_config` | Caddy certificates and state |
+| `alloy_data`                 | Alloy collection state       |
 
-Install dotenvx using its official installation instructions (<https://dotenvx.com/docs/install/>):
+A fresh VPS starts with empty volumes. RequestHole data is currently treated as disposable and has no configured backup. Before hosting an app that needs to survive host loss, set up and test its backup and restore procedure.
 
-curl -sfS <https://dotenvx.sh> | sh
-dotenvx --version
+## Set up a VPS
 
-Securely transfer the existing .env.keys into /srv/server/.env.keys, then restrict access:
+### 1. Prepare the host
 
-cd /srv/server
-chmod 600 .env.keys
-dotenvx run -- docker compose config --quiet
+Use a Docker-supported Ubuntu release and a regular SSH user with sudo access. The current application images target `linux/amd64`.
 
-Do not commit the key or generate a replacement for the existing encrypted .env.
+Allow inbound TCP on your SSH port and ports 80 and 443. Point `gross.dev`, `requesthole.com`, and `health.gross.dev` at the VPS. Point each `www` name at its respective apex domain. Keep IPv6 records only if the VPS can serve those names over IPv6.
 
-### 4. Pull images and start services
+### 2. Install Docker and dotenvx
 
-Review the selected images, then start the project:
+Clone the public repository and run the bootstrap script.
 
-dotenvx run -- docker compose config --images
-dotenvx run -- docker compose pull
-dotenvx run -- docker compose up -d --wait --pull never
-dotenvx run -- docker compose ps
+```bash
+sudo apt-get update &&
+  sudo apt-get install -y git curl ca-certificates &&
+  sudo install -d -o "$USER" -g "$(id -gn)" -m 0755 /srv/server &&
+  git clone https://github.com/GrossNate/my-shared-server.git /srv/server &&
+  cd /srv/server &&
+  ./bootstrap.sh
+```
 
-Public application images require no registry login.
+Bootstrap installs Docker and adds your user to the `docker` group, which grants root-equivalent access. Log out and reconnect, then check `docker compose version` and `docker ps`.
 
-Compose creates the required networks and volumes. Caddy obtains and renews HTTPS certificates once DNS and inbound connectivity work.
+Install dotenvx using the [official installation instructions](https://dotenvx.com/docs/install/). Securely copy the existing private key file to `/srv/server/.env.keys`.
 
---wait checks configured container health checks and whether other services are running. It does not verify public routing or telemetry delivery.
+### 3. Start and verify the stack
 
-### 5. Verify applications and monitoring
+```bash
+cd /srv/server &&
+  chmod 600 .env.keys &&
+  dotenvx run -- docker compose config --quiet &&
+  dotenvx run -- docker compose pull &&
+  dotenvx run -- docker compose up -d --wait --pull never &&
+  dotenvx run -- docker compose ps
+```
 
-Use the checks under “Check status and logs.” Also verify:
+Compose creates the networks and volumes. Caddy obtains HTTPS certificates once DNS and inbound connectivity are working.
 
-- Both sites load and their www and HTTP redirects work.
-- RequestHole can receive and display a request.
-- Grafana Cloud receives fresh metrics and container logs.
-- External checks and alert notifications are configured as intended.
-
-## Data and recovery
-
-Persistent volumes hold:
-
-- RequestHole application data: requesthole_data
-- Caddy certificates and state: caddy_data, caddy_config
-- Alloy collection state: alloy_data
-
-No application-data backup and restore process is configured. RequestHole data is currently treated as disposable.
-
-A new VPS starts with empty volumes unless data is restored separately. Preserve the dotenvx private key independently of the host.
-
-Before hosting an application whose data must survive host loss, establish and test its backup and restore procedure.
-
-When replacing a host, verify the new server before retiring the old one. DNS changes and container replacement can cause downtime.
+Use [Check status and logs](#check-status-and-logs) to verify both apps and Alloy. Check HTTP-to-HTTPS and `www` redirects, send a request through RequestHole, and confirm that Grafana Cloud receives fresh metrics and logs.
