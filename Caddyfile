@@ -6,8 +6,8 @@
 
 	#include the configured hostname in HTTP metrics
 	metrics {
-			per_host
-		}
+		per_host
+	}
 }
 
 requesthole.com {
@@ -40,6 +40,6 @@ health.gross.dev {
 
 # metrics are reachable from the host and the shared Docker network.
 http://172.30.0.2:9180 {
-		bind 172.30.0.2
-		metrics /metrics
-	}
+	bind 172.30.0.2
+	metrics /metrics
+}
