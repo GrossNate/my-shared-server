@@ -1,416 +1,411 @@
 # My Shared Server
 
-This repository runs multiple websites and applications on one Ubuntu VPS. Docker Compose manages them as a single project, `shared-server`. Caddy routes requests by domain and manages HTTPS certificates.
+Production configuration for gross.dev and RequestHole on one Ubuntu VPS.
 
-Applications run from public GitHub Container Registry (GHCR) images. This repository contains their production configuration; application source code and image builds stay outside it.
+Docker Compose manages the shared-server project. Caddy handles routing and HTTPS. Grafana Alloy sends host metrics, web-server metrics, and container logs to Grafana Cloud.
 
-## Architecture
+Application source code and image builds live in their own repositories. Deployments are manual.
 
-```mermaid
-flowchart TD
-    Images["Public GHCR images"]
-    Visitors["Visitors"]
+## Everyday commands
 
-    subgraph VPS["Ubuntu VPS · Compose project: shared-server"]
-        Pull["docker compose pull"]
+Run server commands from /srv/server as your regular SSH user:
 
-        Caddy["Reverse proxy<br/>service: caddy<br/>172.30.0.2 · ports 80 / 443"]
+cd /srv/server
 
-        Grossdev["gross.dev site<br/>service: grossdev<br/>port 80"]
+Use dotenvx run -- docker compose for Compose commands. It decrypts the Grafana Cloud credential from .env before Compose reads the configuration.
 
-        subgraph RequestHole["RequestHole"]
-            Frontend["Frontend · nginx<br/>service: requesthole-nginx<br/>port 80"]
-            Backend["Backend<br/>service: requesthole-backend<br/>172.31.255.3 · port 3000"]
-            Database[("Application data<br/>volume: requesthole_data")]
-        end
+Run commands in order and stop if one fails.
 
-        CaddyData[("Certificates and configuration<br/>volumes: caddy_data, caddy_config")]
-    end
+### Update gross.dev
 
-    Images -.-> Pull
-    Pull -.-> Grossdev
-    Pull -.-> Frontend
-    Pull -.-> Backend
+Wait for the application's image-publishing workflow to finish successfully, then run:
 
-    Visitors -->|"HTTP / HTTPS"| Caddy
-    Caddy -->|"edge · gross.dev"| Grossdev
-    Caddy -->|"edge · requesthole.com"| Frontend
-    Frontend -->|"requesthole_private · frontend IP: 172.31.255.2"| Backend
+dotenvx run -- docker compose pull grossdev
+dotenvx run -- docker compose up -d --wait --pull never grossdev
+curl --fail --silent --show-error --output /dev/null <https://gross.dev/>
 
-    Backend --- Database
-    Caddy --- CaddyData
-```
+### Update RequestHole
 
-Caddy is the only container that publishes host ports. Public-facing application services share the `edge` network (`172.30.0.0/24`) and can communicate with one another; this network does not isolate applications.
+Wait for both application images to publish successfully, then run:
 
-RequestHole also has an internal network, `requesthole_private` (`172.31.255.0/24`). Its backend has no direct connection to `edge` or the internet.
+dotenvx run -- docker compose pull requesthole-backend requesthole-nginx
+dotenvx run -- docker compose up -d --wait --pull never requesthole-backend requesthole-nginx
+curl --fail --silent --show-error --output /dev/null <https://requesthole.com/>
 
-Caddy's fixed address is part of RequestHole's client-IP trust configuration: nginx trusts forwarding headers from `172.30.0.2`, and the backend trusts its nginx frontend at `172.31.255.2`.
+Open RequestHole, create a hole, send a request, and confirm it appears.
 
-| Location                       | Purpose                                                            |
-| ------------------------------ | ------------------------------------------------------------------ |
-| `bootstrap.sh`                 | Install Docker Engine and Compose; prepare server directories      |
-| `compose.yml`                  | Define Caddy, shared resources, and application includes           |
-| `Caddyfile`                    | Configure domains, reverse proxies, and redirects                  |
-| `.env`                         | Select application image tags; contains no secrets                 |
-| `apps/<application>/`          | Store each application's Compose file and supporting configuration |
-| `.github/workflows/format.yml` | Check repository formatting                                        |
+Both applications currently use latest. Pulling downloads the currently published images; up replaces containers whose images changed. Pulling alone leaves running containers untouched.
 
-## Set up a new server
+These updates can briefly interrupt the affected application. Health checks do not automatically roll back a failed deployment.
 
-### 1. Check prerequisites
+### Apply changes from this repository
 
-These instructions assume:
+After committing and pushing configuration changes, fetch them on the VPS:
 
-- A newly provisioned VPS running a [Docker-supported Ubuntu release](https://docs.docker.com/engine/install/ubuntu/#os-requirements).
-- Working SSH key access as a regular user with sudo privileges.
-- Access to this private GitHub repository and the hosted domains' DNS settings.
-- Published application images compatible with the server's CPU architecture.
+git pull --ff-only
+dotenvx run -- docker compose config --quiet
 
-Run server commands as that regular SSH user. The deployment directory is `/srv/server`.
+Then use the relevant procedure below.
+
+| Changed files                                  | Apply with                             |
+| ---------------------------------------------- | -------------------------------------- |
+| Caddyfile                                      | Reload Caddy                           |
+| Compose files or application version variables | Apply Compose configuration            |
+| monitoring/*.alloy or Grafana Cloud credential | Recreate Alloy                         |
+| nginx configuration mounted into applications  | Recreate the affected nginx containers |
+| Grafana dashboard or Knowledge Graph files     | Apply separately in Grafana Cloud      |
+| Documentation or formatting tools              | No server action                       |
+
+A Git pull updates files on disk. It does not reload running services.
+
+#### Reload Caddy
+
+dotenvx run -- docker compose exec -T caddy \
+caddy reload --config - --adapter caddyfile < Caddyfile
+
+This sends the current host file directly to Caddy. It avoids stale bind-mounted contents when Git replaces the file.
+
+Caddy reload (<https://caddyserver.com/docs/command-line#caddy-reload>) applies valid configuration without restarting the container. A rejected configuration leaves the previous configuration active.
+
+If adding an application, start its services before reloading routes that point to them.
+
+#### Apply Compose configuration
+
+dotenvx run -- docker compose up -d --wait --pull never
+dotenvx run -- docker compose ps
+
+This applies service configuration changes using locally available images. To deploy a new image, pull it first using the application commands above.
+
+Review shared-network changes before applying them: they may affect multiple applications.
+
+Compose does not detect changes to the contents of bind-mounted configuration files. Use the explicit procedures below for those files.
+
+#### Apply Alloy configuration or credential changes
+
+Validate the current files in a temporary container:
+
+dotenvx run -- docker compose run --rm --no-deps alloy validate /etc/alloy
+
+Then recreate Alloy:
+
+dotenvx run -- docker compose up -d --wait --pull never --force-recreate alloy
+curl --fail --silent --show-error <http://127.0.0.1:12345/-/healthy>
+dotenvx run -- docker compose logs --tail=50 alloy
+
+Alloy mounts individual configuration files. Recreating the container ensures it reads files replaced by Git and receives the current credential.
+
+Configuration validation checks structure; it does not prove Grafana Cloud accepts the credential or receives telemetry. Confirm fresh data in Grafana Cloud afterward.
+
+#### Apply mounted nginx configuration
+
+For changes to monitoring/nginx-status.conf, recreate both frontend containers:
+
+dotenvx run -- docker compose up -d --wait --pull never --force-recreate grossdev requesthole-nginx
+
+For changes only to apps/requesthole/nginx/realip.conf:
+
+dotenvx run -- docker compose up -d --wait --pull never --force-recreate requesthole-nginx
+
+These commands briefly interrupt the affected sites.
+
+### Check status and logs
+
+dotenvx run -- docker compose ps
+dotenvx run -- docker compose logs --tail=100 caddy
+dotenvx run -- docker compose logs --tail=100 grossdev
+dotenvx run -- docker compose logs --tail=100 requesthole-backend requesthole-nginx
+dotenvx run -- docker compose logs --tail=100 alloy nginx-exporter
+
+Follow RequestHole logs while reproducing a problem:
+
+dotenvx run -- docker compose logs --follow --tail=100 requesthole-backend requesthole-nginx
+
+Check public endpoints and Alloy:
+
+curl --fail --silent --show-error <https://health.gross.dev/>
+curl --fail --silent --show-error --output /dev/null <https://gross.dev/>
+curl --fail --silent --show-error --output /dev/null <https://requesthole.com/>
+curl --fail --silent --show-error <http://127.0.0.1:12345/-/healthy>
+
+health.gross.dev checks the public route to Caddy. It does not check either application's behavior.
 
 > [!CAUTION]
-> This procedure recreates the current applications with empty volumes on a new host. RequestHole data is disposable, and no application-data backup or restore process is configured. Before adding an application whose state must survive host loss, define and test its backup and restore procedure.
+> Do not use docker compose down for routine updates. It stops the whole project. Adding -v can delete persistent volumes.
+>
+> Use targeted pull and up commands. restart does not deploy new images or apply changed Compose settings.
 
-Allow inbound traffic through the VPS provider's firewall and any host firewall:
+## Configuration and secrets
 
-| Protocol | Port                     | Purpose                                   |
-| -------- | ------------------------ | ----------------------------------------- |
-| TCP      | Your configured SSH port | Administration                            |
-| TCP      | 80                       | HTTP redirects and certificate validation |
-| TCP      | 443                      | HTTPS                                     |
+| File      | Purpose                                                                        | Committed? |
+| --------- | ------------------------------------------------------------------------------ | ---------- |
+| .env      | Application image tags, dotenvx public key, encrypted Grafana Cloud credential | Yes        |
+| .env.keys | Private key used to decrypt .env                                               | No         |
 
-Preserve SSH access when changing firewall rules. Docker-published ports can bypass UFW rules, so application services must not publish additional host ports. See [Docker's firewall guidance](https://docs.docker.com/engine/install/ubuntu/#firewall-limitations).
+The application version variables are plaintext:
 
-### 2. Give the server read-only GitHub access
+REQUESTHOLE_VERSION=latest
+GROSSDEV_VERSION=latest
 
-> [!NOTE]
-> Originally I made my server repo private, hence this section on generating a
-> key, adding it to GitHub, etc. This is no longer necessary but leaving it here
-> for posterity.
+GCLOUD_RW_API_KEY is encrypted. Alloy uses it to send metrics and logs to the configured Grafana Cloud endpoints.
 
-Install the tools needed to clone the repository:
+Keep a secure copy of the existing .env.keys outside this repository. A new clone does not include it. Generating a different key will not decrypt the existing credential.
 
-```bash
+dotenvx (<https://dotenvx.com/docs/cli/run/>) decrypts values when running a command:
+
+dotenvx run -- docker compose config --quiet
+
+Use config --quiet to validate configuration and config --images to inspect image references:
+
+dotenvx run -- docker compose config --images
+
+Avoid sharing unredacted output from docker compose config or container inspection: resolved configuration can contain the decrypted credential.
+
+### Select a version or roll back an application
+
+Edit the application's version variable in .env in your local checkout, preserving the encrypted credential and public key. Commit and push the change.
+
+The current image workflows publish these commit tags:
+
+| Application                      | Tag format            |
+| -------------------------------- | --------------------- |
+| grossdev                         | sha-<full commit SHA> |
+| RequestHole frontend and backend | <full commit SHA>     |
+
+On the VPS, pull the configuration change, then follow the relevant application-update procedure.
+
+Both RequestHole images must have the selected tag. latest moves as images are published; a previous commit tag lets you select a known revision.
+
+Rollback uses the same deployment commands with the previous tag. Reverting an image does not reverse database migrations.
+
+### Change the Grafana Cloud credential
+
+Use dotenvx set (<https://dotenvx.com/docs/cli/set/>) to update GCLOUD_RW_API_KEY with encryption. Commit the encrypted .env, keeping .env.keys out of Git.
+
+Pull the change on the VPS and follow “Apply Alloy configuration or credential changes.”
+
+## Observability
+
+Grafana Cloud stores the collected metrics and logs. Grafana and Loki are not hosted on this VPS.
+
+| Signal                                      | Source                                     | Configuration                                                                |
+| ------------------------------------------- | ------------------------------------------ | ---------------------------------------------------------------------------- |
+| Host CPU, memory, disk, and network metrics | Alloy's Unix exporter                      | monitoring/config.alloy                                                      |
+| Container stdout/stderr logs                | Docker discovery and Alloy's Loki pipeline | monitoring/logs.alloy                                                        |
+| HTTP request metrics by site                | Caddy metrics endpoint                     | Caddyfile, monitoring/caddy.alloy                                            |
+| nginx connections and request counts        | Shared nginx exporter                      | monitoring/nginx-status.conf, monitoring/nginx.alloy, monitoring/compose.yml |
+
+Metrics are scraped every 60 seconds. Container discovery refreshes every 30 seconds.
+
+Telemetry identifies this host as vm2323 and the environment as production. When replacing or adding a host, review those labels in the Alloy files.
+
+### Find application logs
+
+In Grafana Cloud's Loki query editor, use:
+
+{compose_project="shared-server", app="requesthole"}
+
+For gross.dev:
+
+{compose_project="shared-server", service_name="grossdev"}
+
+Logs carry stable Compose service names. Both RequestHole services share app="requesthole".
+
+The pipeline normalizes recognized severity levels and attaches detected_level and http_status as structured metadata when available. It preserves original log messages; URLs and client IPs may remain in those messages.
+
+All services inherit local Docker log rotation from compose.defaults.yml: JSON logs, 10 MB per file, up to three files per container.
+
+### Dashboards and Grafana Cloud configuration
+
+monitoring/shared-server-overview.json is a saved Grafana dashboard resource titled GrossNate Shared Server Overview. It includes public availability, host capacity, request metrics, recent logs, and alert information.
+
+monitoring/knowledge-graph/nginx.yml contains the nginx Knowledge Graph configuration.
+
+These files are not deployed by Compose. Changes must be applied separately in Grafana Cloud. After editing the dashboard in Grafana Cloud, export the updated resource back into the repository.
+
+Synthetic checks, alert rules, notification routing, and data sources are not fully provisioned by this repository. Recreating the VPS alone does not recreate those Grafana Cloud settings.
+
+### Monitoring endpoints
+
+| Endpoint                                        | Reachable from                         |
+| ----------------------------------------------- | -------------------------------------- |
+| Alloy UI and health endpoints: 127.0.0.1:12345  | VPS                                    |
+| Caddy metrics: 172.30.0.2:9180/metrics          | VPS and containers that can reach edge |
+| nginx stub status: port 8080, path /stub_status | Allowed clients on the Docker network  |
+| nginx exporter: port 9113                       | edge network                           |
+
+No additional public firewall ports are needed for monitoring.
+
+Alloy uses host networking and reads host filesystems and the Docker socket. Treat it as a privileged component, even though its mounts are configured read-only.
+
+## Architecture and files
+
+Internet → Caddy → grossdev
+→ requesthole-nginx → requesthole-backend → requesthole_data
+
+Host metrics ────────────────┐
+Docker container logs ───────┤
+Caddy metrics ───────────────┼→ Alloy → Grafana Cloud
+nginx → nginx-exporter ──────┘
+
+Caddy publishes ports 80 and 443. Alloy uses host networking, with its HTTP listener bound to localhost.
+
+Public-facing application containers share the edge network. It allows communication between those containers; it does not isolate applications from one another.
+
+RequestHole's backend uses the internal requesthole_private network and has no direct internet connection.
+
+Fixed addresses support the trusted-proxy chain:
+
+- Caddy: 172.30.0.2
+- RequestHole nginx: 172.31.255.2
+- RequestHole backend: 172.31.255.3
+
+Preserve these addresses unless updating the corresponding trust configuration.
+
+| Location                     | Purpose                                                             |
+| ---------------------------- | ------------------------------------------------------------------- |
+| compose.yml                  | Project, shared network, Caddy, and application includes            |
+| compose.defaults.yml         | Shared Docker logging settings                                      |
+| Caddyfile                    | Domains, routing, HTTPS, and Caddy metrics                          |
+| apps/                        | Application services and supporting configuration                   |
+| monitoring/                  | Alloy, nginx exporter, dashboard, and Knowledge Graph configuration |
+| bootstrap.sh                 | Docker installation and initial server directories                  |
+| .github/workflows/format.yml | Formatting checks; no deployment                                    |
+
+## Change or add an application
+
+Make configuration changes locally, commit and push them, then apply them on the VPS.
+
+For a new application:
+
+1. Add apps/<application>/compose.yml with its image, required environment, health check, and storage.
+2. Include it in the root compose.yml, preserving the existing application and monitoring includes.
+3. Add any image-version variable to .env.
+4. Connect its public-facing service to edge, without publishing host ports.
+5. Add domain routing to Caddyfile and configure DNS.
+6. Start the application, reload Caddy, and verify public behavior.
+
+Use the existing application files as examples. Launch everything from the root project rather than starting included Compose files separately.
+
+Use named volumes for persistent application data. Place supporting services on application-specific networks. internal: true prevents direct external connectivity, so use it only when those services do not need outbound access.
+
+New Compose containers are discovered automatically for logs. An optional logging.app Docker label groups multiple services under one application.
+
+For another nginx service, mount monitoring/nginx-status.conf and add its scrape URI to nginx-exporter in monitoring/compose.yml.
+
+### Local checks
+
+Formatting requires Node.js/npm, Docker, and shfmt 3.14.1. Compose validation also requires dotenvx and the decryption key.
+
+npm ci
+npm run format
+npm run check:format
+dotenvx run -- docker compose config --quiet
+
+Formatting checks do not validate application behavior, Alloy configuration, or Grafana Cloud connectivity.
+
+## Set up a new VPS
+
+Use a Docker-supported Ubuntu release, a regular SSH user with sudo access, and images compatible with the host architecture. The current application publishing workflows build for linux/amd64.
+
+### 1. Configure network access
+
+Allow inbound TCP on:
+
+- Your SSH port
+- Port 80
+- Port 443
+
+Preserve SSH access while changing firewall rules. Application and monitoring ports should remain unpublished.
+
+Docker-published ports can bypass UFW rules. See Docker's firewall guidance (<https://docs.docker.com/engine/install/ubuntu/#firewall-limitations>).
+
+Point these DNS names at the VPS:
+
+| Name                | Record                            |
+| ------------------- | --------------------------------- |
+| gross.dev           | A record for the VPS IPv4 address |
+| <www.gross.dev>       | CNAME to gross.dev                |
+| requesthole.com     | A record for the VPS IPv4 address |
+| <www.requesthole.com> | CNAME to requesthole.com          |
+| health.gross.dev    | A record for the VPS IPv4 address |
+
+Keep AAAA records only if IPv6 reaches this server.
+
+### 2. Clone and install Docker
+
+The repository is public; cloning over HTTPS requires no GitHub deploy key.
+
 sudo apt-get update
-sudo apt-get install -y git openssh-client
-```
+sudo apt-get install -y git curl ca-certificates
 
-Create a dedicated deployment key:
+sudo install -d -o "$USER" -g "$(id -gn)" -m 0755 /srv/server
 
-```bash
-mkdir -p ~/.ssh
-chmod 700 ~/.ssh
-
-ssh-keygen -t ed25519 \
-  -f ~/.ssh/github-server-deploy \
-  -C "shared-server-deploy"
-
-cat ~/.ssh/github-server-deploy.pub
-```
-
-In `GrossNate/my-shared-server`, open **Settings → Deploy keys → Add deploy key**. Paste the public key and leave **Allow write access** unchecked.
-
-Add this entry to `~/.ssh/config`, preserving any existing entries:
-
-```sshconfig
-Host github-server
-    HostName github.com
-    User git
-    IdentityFile ~/.ssh/github-server-deploy
-    IdentitiesOnly yes
-```
-
-Set permissions:
-
-```bash
-chmod 600 ~/.ssh/config
-chmod 600 ~/.ssh/github-server-deploy
-```
-
-Test access:
-
-```bash
-ssh -T github-server
-```
-
-Before accepting GitHub's host key, compare its fingerprint with [GitHub's published fingerprints](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints).
-
-A successful test reports authentication followed by “GitHub does not provide shell access.” Its exit status of 1 is expected. If you protected the deployment key with a passphrase, Git operations may prompt for it.
-
-The private key stays on the server. Only its `.pub` counterpart belongs in GitHub. See [GitHub's deploy-key documentation](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/managing-deploy-keys#deploy-keys).
-
-### 3. Clone and bootstrap
-
-Create the deployment directory and clone the repository:
-
-```bash
-sudo install -d \
-  -o "$USER" \
-  -g "$(id -gn)" \
-  -m 0755 \
-  /srv/server
-
-git clone \
-  git@github-server:GrossNate/my-shared-server.git \
-  /srv/server
+git clone <https://github.com/GrossNate/my-shared-server.git> /srv/server
 
 cd /srv/server
 ./bootstrap.sh
-```
 
-The script installs Docker Engine and Compose from Docker's official apt repository, enables Docker at boot, and adds your user to the `docker` group. It does not configure SSH, firewall rules, or DNS.
+Bootstrap installs Docker Engine and Compose, enables Docker at boot, and adds your user to the Docker group. It does not configure DNS, firewall rules, dotenvx, or secrets.
 
-The script's final message mentions 1Password, but no secrets manager is required for the current applications.
-
-Log out and reconnect so the group change takes effect. Then verify:
-
-```bash
-cd /srv/server
+Log out and reconnect, then verify:
 
 docker version
 docker compose version
 docker ps
-```
 
-Membership in the `docker` group grants privileges equivalent to root. Limit it to trusted users.
+Docker group membership grants privileges equivalent to root.
 
-### 4. Review image versions and download images
+### 3. Install dotenvx and restore the key
 
-The root `.env` currently selects:
+Install dotenvx using its official installation instructions (<https://dotenvx.com/docs/install/>):
 
-```dotenv
-REQUESTHOLE_VERSION=latest
-GROSSDEV_VERSION=latest
-```
+curl -sfS <https://dotenvx.sh> | sh
+dotenvx --version
 
-Prefer an existing release or commit tag from each GHCR package so the selected revision is recorded in Git. Preserve the exact published spelling, including any `sha-` prefix. Both RequestHole images must have the selected tag.
+Securely transfer the existing .env.keys into /srv/server/.env.keys, then restrict access:
 
-These variables select tags, not digests: the application Compose files construct image references as `repository:tag`. Tags can be republished, and `latest` changes as new images are published.
-
-Validate and pull:
-
-```bash
 cd /srv/server
+chmod 600 .env.keys
+dotenvx run -- docker compose config --quiet
 
-docker compose config --quiet
-docker compose config --images
-docker compose pull
-```
+Do not commit the key or generate a replacement for the existing encrypted .env.
 
-Run these commands in order and stop if any fails. `config --quiet` produces no output on success; `config --images` shows the selected image references.
+### 4. Pull images and start services
 
-Public GHCR images require no registry login. The deployment key grants access to this private repository, not to private container images.
+Review the selected images, then start the project:
 
-### 5. Configure DNS and start the applications
+dotenvx run -- docker compose config --images
+dotenvx run -- docker compose pull
+dotenvx run -- docker compose up -d --wait --pull never
+dotenvx run -- docker compose ps
 
-Create or update these records using the new VPS's public IPv4 address:
+Public application images require no registry login.
 
-| Hostname              | Record | Target                  |
-| --------------------- | ------ | ----------------------- |
-| `requesthole.com`     | A      | VPS public IPv4 address |
-| `www.requesthole.com` | CNAME  | `requesthole.com`       |
-| `gross.dev`           | A      | VPS public IPv4 address |
-| `www.gross.dev`       | CNAME  | `gross.dev`             |
+Compose creates the required networks and volumes. Caddy obtains and renews HTTPS certificates once DNS and inbound connectivity work.
 
-Remove conflicting records for these hostnames. Keep an AAAA record only if IPv6 reaches this server and its published ports. Preserve unrelated records, such as mail configuration.
+--wait checks configured container health checks and whether other services are running. It does not verify public routing or telemetry delivery.
 
-Start the project:
+### 5. Verify applications and monitoring
 
-```bash
-cd /srv/server
+Use the checks under “Check status and logs.” Also verify:
 
-docker compose up -d --wait
-docker compose ps
-```
+- Both sites load and their www and HTTP redirects work.
+- RequestHole can receive and display a request.
+- Grafana Cloud receives fresh metrics and container logs.
+- External checks and alert notifications are configured as intended.
 
-Compose creates the networks and volumes. Do not create the `edge` network manually.
+## Data and recovery
 
-`--wait` waits for services with health checks to become healthy and other services to be running. It does not verify public routing or application functionality. A failed startup or health check does not automatically roll back the deployment.
+Persistent volumes hold:
 
-Once DNS and inbound connectivity work, [Caddy obtains and renews HTTPS certificates](https://caddyserver.com/docs/automatic-https) using Let's Encrypt. Certificate issuance may take time after DNS changes.
+- RequestHole application data: requesthole_data
+- Caddy certificates and state: caddy_data, caddy_config
+- Alloy collection state: alloy_data
 
-### 6. Verify the deployment
+No application-data backup and restore process is configured. RequestHole data is currently treated as disposable.
 
-Check both sites, their `www` redirects, and HTTP-to-HTTPS redirects:
+A new VPS starts with empty volumes unless data is restored separately. Preserve the dotenvx private key independently of the host.
 
-```bash
-curl -I https://requesthole.com
-curl -I https://www.requesthole.com
-curl -I https://gross.dev
-curl -I https://www.gross.dev
-curl -I http://requesthole.com
-curl -I http://gross.dev
-```
+Before hosting an application whose data must survive host loss, establish and test its backup and restore procedure.
 
-Open both sites in a browser. For RequestHole, create a hole, submit a request, and confirm that it appears.
-
-Inspect failures with:
-
-```bash
-docker compose logs --tail=100 caddy
-docker compose logs --tail=100 requesthole-nginx requesthole-backend
-docker compose logs --tail=100 grossdev
-```
-
-For certificate failures, check DNS and inbound ports. For HTTP 502 responses, check the upstream service's health, network membership, and listening port.
-
-When replacing a host, allow DNS changes to propagate and verify traffic reaches the new host before retiring the old one. Remove the old host's GitHub deploy key afterward. This procedure does not guarantee a migration without downtime.
-
-## Add a site or application
-
-Make configuration changes in a local checkout, commit and push them, then pull them onto the server. Always deploy from the root project in `/srv/server`.
-
-### 1. Inspect the application image
-
-Read the image's deployment documentation and identify:
-
-- Its public GHCR image reference, published tag, and supported CPU architectures.
-- Its internal listening port and required environment variables.
-- Supporting services, storage requirements, and startup dependencies.
-- A suitable health check using tools present in the image.
-
-The web process must listen on an interface reachable from other containers, usually `0.0.0.0`, rather than only `127.0.0.1`.
-
-Docker networks are deployment configuration, not properties imposed by an image. Adapt any upstream Compose examples to this project's service and network names.
-
-### 2. Create its application configuration
-
-Create `apps/<application>/compose.yml` and place supporting files beside it.
-
-The following is a template for a single-container application. Replace `example`, `OWNER/IMAGE`, and `EXAMPLE_VERSION` with application-specific names:
-
-```yaml
-services:
-  example:
-    image: "ghcr.io/OWNER/IMAGE:${EXAMPLE_VERSION:?Set EXAMPLE_VERSION in the root .env}"
-    restart: unless-stopped
-
-    networks:
-      - edge
-```
-
-Add its version variable to the root `.env`, using a published image tag. Add required environment variables, storage mounts, and a health check to the service.
-
-Follow these conventions:
-
-- Use unique service, network, and volume keys across the project.
-- Connect the public-facing service to `edge`; omit host `ports:` mappings.
-- Declare `edge` only in the root `compose.yml`. Application files reference it.
-- Put backends and databases on application-specific networks. Use `internal: true` only when services on that network do not require outbound connectivity.
-- Use service names for discovery. Preserve aliases required by an application's internal configuration.
-- Mount persistent data in named volumes. Relative bind-mount paths resolve from the included application's directory.
-- Keep application-specific settings under `apps/`, except image tags in `.env` and domain routing in `Caddyfile`.
-
-Use `apps/grossdev/compose.yml` as a single-container example. `apps/requesthole/compose.yml` demonstrates multiple services, health-based startup ordering, private networking, and storage.
-
-Ordinary service discovery does not need fixed IPs. If an app requires trusted-proxy addresses, configure its actual proxy chain and avoid conflicting subnets or addresses.
-
-### 3. Include it in the root project
-
-Add the new file to the root `compose.yml`:
-
-```yaml
-include:
-  - ./apps/requesthole/compose.yml
-  - ./apps/grossdev/compose.yml
-  - ./apps/example/compose.yml
-```
-
-Preserve the existing services, networks, and volumes. Included applications belong to `shared-server`; do not launch their Compose files as separate projects.
-
-See Docker's [include](https://docs.docker.com/reference/compose-file/include/) and [networking](https://docs.docker.com/compose/how-tos/networking/) documentation.
-
-### 4. Configure its domain
-
-Add site blocks to the root `Caddyfile`. Replace the example domain, service name, and port:
-
-```caddyfile
-example.com {
-	reverse_proxy example:8080
-}
-
-www.example.com {
-	redir https://example.com{uri} permanent
-}
-```
-
-Use the container's internal listening port. Create the domain's DNS records using the pattern in the server setup instructions.
-
-### 5. Check and deploy
-
-Run locally before committing:
-
-```bash
-npm ci
-npm run format
-npm run check:format
-docker compose config --quiet
-```
-
-Formatting uses Node.js/npm, shfmt 3.14.1, and Docker. The scripts use the pinned Prettier dependency and a Caddy formatter container. GitHub Actions checks the same formatting; these development tools are not required on the VPS.
-
-After committing and pushing, run on the server. Replace `example` with the new application's service name:
-
-```bash
-cd /srv/server
-
-git pull --ff-only
-docker compose config --quiet
-docker compose pull example
-docker compose up -d --wait example
-```
-
-Stop if a command fails. For a multi-service application, name all its services in the pull and startup commands. Compose may also start declared dependencies.
-
-After the application is ready, apply the updated routes:
-
-```bash
-docker compose exec -T caddy \
-  caddy reload --config - --adapter caddyfile < Caddyfile
-```
-
-This sends the current host file directly to Caddy, avoiding stale contents if Git or an editor replaced the bind-mounted file. Caddy applies the configuration without restarting; a rejected configuration leaves the active configuration running. See [Caddy reload](https://caddyserver.com/docs/command-line#caddy-reload).
-
-Verify the domain, redirects, application behavior, and container health:
-
-```bash
-docker compose ps
-docker compose logs --tail=100 example
-```
-
-### Update or roll back an application
-
-Change its tag in `.env`, commit and push, then fetch the configuration on the server:
-
-```bash
-cd /srv/server
-
-git pull --ff-only
-docker compose config --quiet
-```
-
-For gross.dev:
-
-```bash
-docker compose pull grossdev
-docker compose up -d --wait grossdev
-```
-
-For RequestHole:
-
-```bash
-docker compose pull requesthole-backend requesthole-nginx
-docker compose up -d --wait requesthole-backend requesthole-nginx
-```
-
-Check `docker compose ps`, logs, and the application after deployment. Downloads leave running containers in place; recreating containers can briefly interrupt the affected application.
-
-Targeted deployments leave unrelated applications running when shared infrastructure is unchanged. This setup does not provide rolling deployments with zero downtime.
-
-For routing-only changes, pull the updated `Caddyfile` and use the reload command above. Changes to shared networks or Caddy's container configuration require separate maintenance planning.
-
-To roll back, select a previously published tag and repeat the deployment. Reverting an image does not reverse database migrations.
-
-> [!CAUTION]
-> Do not use `docker compose down` for routine deployments: it stops the whole project. Adding `-v` can also delete persistent volumes. Normal updates use targeted `pull` and `up` commands and preserve named-volume data.
+When replacing a host, verify the new server before retiring the old one. DNS changes and container replacement can cause downtime.
