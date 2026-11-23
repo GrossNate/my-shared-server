@@ -8,7 +8,7 @@ gross.dev and RequestHole are the first two apps. Both use the same Caddy proxy 
 
 ## Update an app
 
-Run these commands on the VPS as your regular SSH user. Each block starts in `/srv/server` and stops if a command fails. `dotenvx run --` supplies the decrypted Grafana Cloud credential that the Compose project requires.
+Run the server commands as your regular SSH user. Use `dotenvx run --strict --` when starting or recreating Alloy, including when bringing up the full stack. The other routine commands use plain Compose.
 
 ### gross.dev
 
@@ -16,8 +16,7 @@ Wait for the [grossdev image build](https://github.com/GrossNate/grossdev/action
 
 ```bash
 cd /srv/server &&
-  dotenvx run -- docker compose pull grossdev &&
-  dotenvx run -- docker compose up -d --wait --pull never grossdev &&
+  docker compose up --wait --pull always grossdev &&
   curl -fsS -o /dev/null https://gross.dev/
 ```
 
@@ -27,14 +26,15 @@ Wait for the [RequestHole image build](https://github.com/GrossNate/requesthole/
 
 ```bash
 cd /srv/server &&
-  dotenvx run -- docker compose pull requesthole-backend requesthole-nginx &&
-  dotenvx run -- docker compose up -d --wait --pull never requesthole-backend requesthole-nginx &&
+  docker compose up --wait --pull always requesthole-backend requesthole-nginx &&
   curl -fsS -o /dev/null https://requesthole.com/
 ```
 
 For a functional check, open RequestHole, create a hole, send it a request, and confirm the request appears.
 
-Both apps currently select `latest` in `.env`. Pulling downloads the images. Compose replaces containers whose image or service configuration has changed, which can briefly interrupt the app. `--wait` checks container health where configured. It does not automatically roll back a failed deployment. See [Docker Compose up](https://docs.docker.com/reference/cli/docker/compose/up/).
+Both apps currently select `latest` in `.env`. `--pull always` checks the registry even if the selected tag is already cached. Compose reuses layers it already has and replaces containers whose image or service configuration changed. Replacement can briefly interrupt the app.
+
+`--wait` runs services in the background and waits for them to be healthy or, without a health check, running. The `curl` command checks the public HTTPS route. A failed check does not roll back the deployment. See [Docker Compose up](https://docs.docker.com/reference/cli/docker/compose/up/).
 
 ### Deploy a specific version or roll back
 
@@ -54,7 +54,7 @@ After pushing configuration changes, fetch and validate them on the VPS.
 ```bash
 cd /srv/server &&
   git pull --ff-only &&
-  dotenvx run -- docker compose config --quiet
+  docker compose config --quiet
 ```
 
 A Git pull updates the checkout. Use the relevant command below to apply the change to running services. For changes spanning several components, start any new upstream services before reloading Caddy.
@@ -63,32 +63,32 @@ A Git pull updates the checkout. Use the relevant command below to apply the cha
 
 ```bash
 cd /srv/server &&
-  dotenvx run -- docker compose exec -T caddy \
+  docker compose exec -T caddy \
     caddy reload --config - --adapter caddyfile < Caddyfile
 ```
 
-This reads the current `Caddyfile` from the host, even if Git replaced the file underneath the container’s bind mount. Caddy reloads without restarting the container and keeps its previous configuration if it rejects the new one. See [Caddy reload](https://caddyserver.com/docs/command-line#caddy-reload).
+`-T` disables terminal allocation so the host’s `Caddyfile` can be piped into Caddy even if Git replaced the mounted file. Caddy reloads without restarting the container and keeps its previous configuration if it rejects the new one. See [Caddy reload](https://caddyserver.com/docs/command-line#caddy-reload).
 
 ### Compose service settings
 
+Target the service you changed. For example, after editing Caddy’s Compose settings:
+
 ```bash
 cd /srv/server &&
-  dotenvx run -- docker compose up -d --wait --pull never &&
-  dotenvx run -- docker compose ps
+  docker compose up --wait --pull never caddy
 ```
 
-This uses images already on the VPS. If you added or changed an image reference, pull that service’s image first with `dotenvx run -- docker compose pull <service>`. Use the app-specific update block for application image changes. Plan shared network changes separately because they can affect several services.
+`--pull never` keeps a configuration update from fetching a new image. It uses the local image for the configured tag, which may differ from the running container’s image if someone already pulled that tag. To intentionally change an image, use the app update command or `up --wait --pull always` for the affected service. Use dotenvx if the command includes Alloy. Plan shared network changes separately because they can affect several services.
 
 ### Alloy configuration or Grafana Cloud credential
 
 ```bash
 cd /srv/server &&
-  dotenvx run -- docker compose run --rm --no-deps alloy validate /etc/alloy &&
-  dotenvx run -- docker compose up -d --wait --pull never --force-recreate alloy &&
-  dotenvx run -- docker compose logs --tail=50 alloy
+  docker compose run --rm --pull never alloy validate /etc/alloy &&
+  dotenvx run --strict -- docker compose up --wait --pull never --force-recreate alloy
 ```
 
-Recreating Alloy picks up the current credential and any mounted files Git replaced. Then check `curl -fsS http://127.0.0.1:12345/-/healthy` on the VPS and confirm fresh logs and metrics in Grafana Cloud. Local validation does not test delivery to Grafana Cloud. See [Alloy validation](https://grafana.com/docs/alloy/latest/reference/cli/validate/) and [Alloy health endpoints](https://grafana.com/docs/alloy/latest/reference/http/).
+The temporary validator checks the files without sending telemetry. `--force-recreate` then makes the running service pick up the current credential and any mounted files Git replaced. Check Alloy health and logs below and confirm fresh data in Grafana Cloud. See [Alloy validation](https://grafana.com/docs/alloy/latest/reference/cli/validate/) and [Alloy health endpoints](https://grafana.com/docs/alloy/latest/reference/http/).
 
 ### Mounted nginx configuration
 
@@ -96,17 +96,17 @@ If `monitoring/nginx-status.conf` changed, recreate both nginx frontends.
 
 ```bash
 cd /srv/server &&
-  dotenvx run -- docker compose up -d --wait --pull never --force-recreate grossdev requesthole-nginx
+  docker compose up --wait --pull never --force-recreate --no-deps grossdev requesthole-nginx
 ```
 
 If only `apps/requesthole/nginx/realip.conf` changed, recreate the RequestHole frontend.
 
 ```bash
 cd /srv/server &&
-  dotenvx run -- docker compose up -d --wait --pull never --force-recreate requesthole-nginx
+  docker compose up --wait --pull never --force-recreate --no-deps requesthole-nginx
 ```
 
-Service recreation picks up the current mounted files and can briefly interrupt the affected sites.
+Use these commands when RequestHole’s backend is already healthy. `--no-deps` leaves it alone. Recreating the frontends picks up the current files and can briefly interrupt the sites.
 
 > [!CAUTION]
 > Use `up` for routine changes. `restart` reuses existing containers and does not apply new images or Compose settings. `down` stops the entire project, and `down -v` can delete persistent data.
@@ -117,11 +117,11 @@ Run these on the VPS.
 
 ```bash
 cd /srv/server
-dotenvx run -- docker compose ps
-dotenvx run -- docker compose logs --tail=100 caddy
-dotenvx run -- docker compose logs --tail=100 grossdev
-dotenvx run -- docker compose logs --tail=100 requesthole-backend requesthole-nginx
-dotenvx run -- docker compose logs --tail=100 alloy nginx-exporter
+docker compose ps
+docker compose logs --tail=100 caddy
+docker compose logs --tail=100 grossdev
+docker compose logs --tail=100 requesthole-backend requesthole-nginx
+docker compose logs --tail=100 alloy nginx-exporter
 ```
 
 Add `--follow` to a `logs` command to stream new entries. Check public HTTPS and Alloy separately.
@@ -141,7 +141,7 @@ curl -fsS http://127.0.0.1:12345/-/healthy
 2. Add the app’s Compose file to `include` in the [root Compose file](compose.yml). If the image reference uses a version variable, add its value to `.env`.
 3. Attach the public-facing service to `edge`. Let Caddy handle public traffic. Put private dependencies on an app-specific network and leave their host ports unpublished.
 4. Add the domain to `Caddyfile` and point its DNS at the VPS. In the Caddy route, use the Compose service name and its internal listening port.
-5. Commit and push. On the VPS, fetch and validate the changes, pull the new app’s images, and run `up -d --wait` for its services. Reload Caddy once the app is ready, then test the public URL.
+5. Commit and push. On the VPS, fetch and validate the changes, then run `docker compose up --wait --pull always` followed by the new app’s service names. Reload Caddy once the app is ready, then test the public URL.
 
 All deployment commands run from the root project at `/srv/server`. Docker’s [Compose include reference](https://docs.docker.com/reference/compose-file/include/) explains how it resolves each app’s local paths.
 
@@ -151,12 +151,11 @@ Alloy discovers container logs automatically. Use the same `logging.app` label a
 
 ```bash
 npm ci
-npm run format
 npm run check:format
-dotenvx run -- docker compose config --quiet
+docker compose config --quiet
 ```
 
-Formatting uses Node.js/npm, Docker, and shfmt 3.14.1. Compose validation needs dotenvx and the matching key. The GitHub workflow checks formatting. Deployments are manual.
+Formatting uses Node.js/npm, Docker, and shfmt 3.14.1. Use `npm run format` to fix formatting failures. The GitHub workflow checks formatting. Deployments are manual.
 
 ## Configuration and secrets
 
@@ -165,9 +164,9 @@ Formatting uses Node.js/npm, Docker, and shfmt 3.14.1. Compose validation needs 
 | `.env`      | Committed app image tags, dotenvx public key, and encrypted `GCLOUD_RW_API_KEY`    |
 | `.env.keys` | Private decryption key. Git ignores this file. Keep a secure copy outside the VPS. |
 
-`dotenvx run --` decrypts the Grafana Cloud credential for Compose, which passes it to Alloy. A new clone needs the existing matching `.env.keys` file. See [dotenvx run](https://dotenvx.com/docs/cli/run/).
+`dotenvx run --strict --` decrypts the Grafana Cloud credential for Compose and stops if dotenvx encounters an error. A new clone needs the matching `.env.keys` file to start Alloy. See [dotenvx run](https://dotenvx.com/docs/cli/run/).
 
-Use `docker compose config --quiet` through dotenvx for validation or `docker compose config --images` through dotenvx to list image references. Full resolved configuration and container inspection can expose the decrypted credential.
+Use `docker compose config --quiet` to validate the Compose model or `docker compose config --images` to list its images. Plain Compose can accept the encrypted value, so successful validation alone does not prove Alloy has a usable credential. Full resolved configuration and container inspection can expose decrypted secrets.
 
 To rotate the Grafana Cloud credential, use [dotenvx set](https://dotenvx.com/docs/cli/set/) to update `GCLOUD_RW_API_KEY` with encryption. Commit the encrypted `.env`, pull it on the VPS, and follow the Alloy update procedure.
 
@@ -232,7 +231,7 @@ Clone the public repository and run the bootstrap script.
 
 ```bash
 sudo apt-get update &&
-  sudo apt-get install -y git curl ca-certificates &&
+  sudo apt-get install -y git &&
   sudo install -d -o "$USER" -g "$(id -gn)" -m 0755 /srv/server &&
   git clone https://github.com/GrossNate/my-shared-server.git /srv/server &&
   cd /srv/server &&
@@ -248,10 +247,7 @@ Install dotenvx using the [official installation instructions](https://dotenvx.c
 ```bash
 cd /srv/server &&
   chmod 600 .env.keys &&
-  dotenvx run -- docker compose config --quiet &&
-  dotenvx run -- docker compose pull &&
-  dotenvx run -- docker compose up -d --wait --pull never &&
-  dotenvx run -- docker compose ps
+  dotenvx run --strict -- docker compose up --wait
 ```
 
 Compose creates the networks and volumes. Caddy obtains HTTPS certificates once DNS and inbound connectivity are working.
