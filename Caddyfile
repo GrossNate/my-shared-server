@@ -38,6 +38,12 @@ health.gross.dev {
 	respond "OK" 200
 }
 
+umami.is-very.online {
+	reverse_proxy umami:3000 {
+		header_up X-Real-IP {remote_host}
+	}
+}
+
 # metrics are reachable from the host and the shared Docker network.
 http://172.30.0.2:9180 {
 	bind 172.30.0.2

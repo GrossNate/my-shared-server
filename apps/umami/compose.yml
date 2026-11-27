@@ -1,0 +1,76 @@
+services:
+  umami:
+    extends:
+      file: ../../compose.defaults.yml
+      service: logging-defaults
+    image: "ghcr.io/umami-software/umami:${UMAMI_VERSION:?Set UMAMI_VERSION in the root .env}"
+    init: true
+    restart: unless-stopped
+    labels:
+      logging.app: umami
+
+    environment:
+      DATABASE_URL: "postgresql://umami:${UMAMI_DB_PASSWORD:?Set UMAMI_DB_PASSWORD with dotenvx}@umami-db:5432/umami"
+      APP_SECRET: "${UMAMI_APP_SECRET:?Set UMAMI_APP_SECRET with dotenvx}"
+      TWO_FACTOR_ENCRYPTION_KEY: "${UMAMI_2FA_KEY:?Set UMAMI_2FA_KEY with dotenvx}"
+      CLIENT_IP_HEADER: X-Real-IP
+      DISABLE_TELEMETRY: "1"
+
+    depends_on:
+      umami-db:
+        condition: service_healthy
+
+    networks:
+      - edge
+      - umami_private
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/heartbeat"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  umami-db:
+    extends:
+      file: ../../compose.defaults.yml
+      service: logging-defaults
+    image: postgres:15-alpine
+    restart: unless-stopped
+    labels:
+      logging.app: umami
+
+    environment:
+      POSTGRES_DB: umami
+      POSTGRES_USER: umami
+      POSTGRES_PASSWORD: "${UMAMI_DB_PASSWORD:?Set UMAMI_DB_PASSWORD with dotenvx}"
+
+    command:
+      - postgres
+      - -c
+      - timezone=UTC
+      - -c
+      - shared_buffers=64MB
+      - -c
+      - max_connections=30
+
+    volumes:
+      - umami_db_data:/var/lib/postgresql/data
+
+    networks:
+      - umami_private
+
+    healthcheck:
+      test:
+        ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "umami", "-d", "umami"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+networks:
+  umami_private:
+    internal: true
+
+volumes:
+  umami_db_data:
